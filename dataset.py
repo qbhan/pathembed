@@ -305,7 +305,8 @@ class DenoiseDataset(Dataset):
         }
 
         # Set random seeds
-        random.seed("Inyoung Cho, Yuchi Huo, Sungeui Yoon @ KAIST")
+        # random.seed("Inyoung Cho, Yuchi Huo, Sungeui Yoon @ KAIST")
+        random.seed("Kyubeom Han")
         random.shuffle(self.gt_files)
 
         # Constants for patch importance sampling

@@ -18,6 +18,7 @@ from tqdm import tqdm
 
 from utils import *
 from kpcn import *
+from kpal import *
 
 from losses import *
 from dataset import MSDenoiseDataset, init_data
@@ -82,8 +83,8 @@ parser.add_argument('--lr', default=1e-4, type=float)
 parser.add_argument('--epochs', default=20, type=int)
 parser.add_argument('--loss', default='L1')
 
-save_dir = 'patch_256_kpcn_3'
-writer = SummaryWriter('new_runs/'+save_dir)
+save_dir = 'kpal_tryout_1e-4'
+writer = SummaryWriter('kpal/'+save_dir)
 
 def validation(diffuseNet, specularNet, dataloader, eps, criterion, device, epoch, mode='kpcn'):
   pass
@@ -108,7 +109,7 @@ def validation(diffuseNet, specularNet, dataloader, eps, criterion, device, epoc
 
       outputDiff = diffuseNet(X_diff)
       # if mode == 'KPCN':
-      if 'kpcn' in mode:
+      if 'kpcn' in mode or 'kpal' in mode:
         X_input = crop_like(X_diff, outputDiff)
         outputDiff = apply_kernel(outputDiff, X_input, device)
 
@@ -120,7 +121,7 @@ def validation(diffuseNet, specularNet, dataloader, eps, criterion, device, epoc
       
       outputSpec = specularNet(X_spec)
       # if mode == 'KPCN':
-      if 'kpcn' in mode:
+      if 'kpcn' in mode or 'kpal' in mode:
         X_input = crop_like(X_spec, outputSpec)
         outputSpec = apply_kernel(outputSpec, X_input, device)
 
@@ -138,16 +139,19 @@ def validation(diffuseNet, specularNet, dataloader, eps, criterion, device, epoc
       relL2Final += relL2(outputFinal, Y_final).item()
 
       # visualize
-      if batch_idx == 10:
+      if batch_idx == 20:
         inputFinal = data['kpcn_diffuse_buffer'] * (data['kpcn_albedo'] + eps) + torch.exp(data['kpcn_specular_buffer']) - 1.0
         inputGrid = torchvision.utils.make_grid(inputFinal)
         writer.add_image('noisy patches e{}'.format(epoch+1), inputGrid)
+        writer.add_image('noisy patches e{}'.format(str(epoch+1)+'_'+str(batch_idx)), inputGrid)
 
         outputGrid = torchvision.utils.make_grid(outputFinal)
-        writer.add_image('denoised patches e{}'.format(epoch+1), outputGrid)
+        writer.add_image('denoised patches e{}'.format(str(epoch+1)+'_'+str(batch_idx)), outputGrid)
+        # writer.add_image('denoised patches e{}'.format(epoch+1), outputGrid)
 
         cleanGrid = torchvision.utils.make_grid(Y_final)
-        writer.add_image('clean patches e{}'.format(epoch+1), cleanGrid)
+        # writer.add_image('clean patches e{}'.format(epoch+1), cleanGrid)
+        writer.add_image('clean patches e{}'.format(str(epoch+1)+'_'+str(batch_idx)), cleanGrid)
 
 
 
@@ -167,8 +171,15 @@ def train(mode, device, trainset, validset, eps, L, input_channels, hidden_chann
   # instantiate networks
   print(L, input_channels, hidden_channels, kernel_size, mode)
   print(mode)
-  diffuseNet = make_net(L, input_channels, hidden_channels, kernel_size, mode).to(device)
-  specularNet = make_net(L, input_channels, hidden_channels, kernel_size, mode).to(device)
+  if mode == 'kpcn':
+    diffuseNet = make_net(L, input_channels, hidden_channels, kernel_size, mode).to(device)
+    specularNet = make_net(L, input_channels, hidden_channels, kernel_size, mode).to(device)
+  elif mode == 'single_kpal':
+    diffuseNet = singleFrameDenoiser(input_channels, hidden_channels, kernel_size=21).to(device)
+    specularNet = singleFrameDenoiser(input_channels, hidden_channels, kernel_size=21).to(device)
+  elif mode == 'multi_kpal':
+    diffuseNet = multiScaleDenoiser(input_channels, hidden_channels).to(device)
+    specularNet = multiScaleDenoiser(input_channels, hidden_channels).to(device)
 
   print(diffuseNet, "CUDA:", next(diffuseNet.parameters()).is_cuda)
   print('# Parameter for diffuseNet : {}'.format(sum([p.numel() for p in diffuseNet.parameters()])))
@@ -177,6 +188,8 @@ def train(mode, device, trainset, validset, eps, L, input_channels, hidden_chann
 
   if loss == 'L1':
     criterion = nn.L1Loss()
+  elif loss =='SMAPE':
+    criterion = SMAPE()
   else:
     print('Loss Not Supported')
     return
@@ -212,16 +225,16 @@ def train(mode, device, trainset, validset, eps, L, input_channels, hidden_chann
   total_epoch = 0
   # epoch = checkpointDiff['epoch']
   epoch = 0
-  # print('Check Initialization')
-  # initLossDiff, initLossSpec, initLossFinal, relL2LossFinal = validation(diffuseNet, specularNet, validDataloader, eps, criterion, device, -1, mode)
-  # print("initLossDiff: {}".format(initLossDiff))
-  # print("initLossSpec: {}".format(initLossSpec))
-  # print("initLossFinal: {}".format(initLossFinal))
-  # print("relL2LossFinal: {}".format(relL2LossFinal))
-  # writer.add_scalar('Valid total relL2 loss', relL2LossFinal if relL2LossFinal != float('inf') else 0, (epoch + 1) * len(validDataloader))
-  # writer.add_scalar('Valid total loss', initLossFinal if initLossFinal != float('inf') else 0, (epoch + 1) * len(validDataloader))
-  # writer.add_scalar('Valid diffuse loss', initLossDiff if initLossDiff != float('inf') else 0, (epoch + 1) * len(validDataloader))
-  # writer.add_scalar('Valid specular loss', initLossSpec if initLossSpec != float('inf') else 0, (epoch + 1) * len(validDataloader))
+  print('Check Initialization')
+  initLossDiff, initLossSpec, initLossFinal, relL2LossFinal = validation(diffuseNet, specularNet, validDataloader, eps, criterion, device, -1, mode)
+  print("initLossDiff: {}".format(initLossDiff))
+  print("initLossSpec: {}".format(initLossSpec))
+  print("initLossFinal: {}".format(initLossFinal))
+  print("relL2LossFinal: {}".format(relL2LossFinal))
+  writer.add_scalar('Valid total relL2 loss', relL2LossFinal if relL2LossFinal != float('inf') else 0, (epoch + 1) * len(validDataloader))
+  writer.add_scalar('Valid total loss', initLossFinal if initLossFinal != float('inf') else 0, (epoch + 1) * len(validDataloader))
+  writer.add_scalar('Valid diffuse loss', initLossDiff if initLossDiff != float('inf') else 0, (epoch + 1) * len(validDataloader))
+  writer.add_scalar('Valid specular loss', initLossSpec if initLossSpec != float('inf') else 0, (epoch + 1) * len(validDataloader))
 
 
   import time
@@ -260,8 +273,10 @@ def train(mode, device, trainset, validset, eps, L, input_channels, hidden_chann
       outputDiff = diffuseNet(X_diff)
 
       # if mode == 'KPCN':
-      if 'kpcn' in mode:
+      if 'kpcn' in mode or 'kpal' in mode:
+        # print('Outputdiff: ', outputDiff.shape)
         X_input = crop_like(X_diff, outputDiff)
+        # print('X_input: ', X_input.shape)
         outputDiff = apply_kernel(outputDiff, X_input, device)
 
       Y_diff = crop_like(Y_diff, outputDiff)
@@ -282,7 +297,7 @@ def train(mode, device, trainset, validset, eps, L, input_channels, hidden_chann
       outputSpec = specularNet(X_spec)
 
       # if mode == 'KPCN':
-      if 'kpcn' in mode:
+      if 'kpcn' in mode or 'kpal' in mode:
         X_input = crop_like(X_spec, outputSpec)
         outputSpec = apply_kernel(outputSpec, X_input, device)
 
