@@ -302,8 +302,10 @@ def main():
   if not os.path.exists(args.save_dir):
     os.makedirs(args.save_dir)
 
-    diffuseNet = make_net(args.num_layers, args.input_channels, args.hidden_channels, args.kernel_size, args.mode)
-    specularNet = make_net(args.num_layers, args.input_channels, args.hidden_channels, args.kernel_size, args.mode)
+    # diffuseNet = make_net(args.num_layers, args.input_channels, args.hidden_channels, args.kernel_size, args.mode)
+    # specularNet = make_net(args.num_layers, args.input_channels, args.hidden_channels, args.kernel_size, args.mode)
+    diffuseNet = KPCN(args.num_layers, args.input_channels, args.hidden_channels, args.kernel_size)
+    specularNet = KPCN(args.num_layers, args.input_channels, args.hidden_channels, args.kernel_size)
 
   # print(diffuseNet, "CUDA:", next(diffuseNet.parameters()).is_cuda)
   # print(torch.load(args.diffuse_model).keys)

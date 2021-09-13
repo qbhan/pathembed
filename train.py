@@ -7,6 +7,7 @@ import torchvision.utils
 import torch.optim as optim
 from torch.utils.data import DataLoader
 from tensorboardX import SummaryWriter
+from torchsummary import summary
 
 import matplotlib.pyplot as plt
 import os
@@ -85,8 +86,8 @@ parser.add_argument('--lr', default=1e-4, type=float)
 parser.add_argument('--epochs', default=20, type=int)
 parser.add_argument('--loss', default='L1')
 
-save_dir = 'decomp_kpcn'
-writer = SummaryWriter('tryouts/'+save_dir)
+save_dir = 'kpcn_1'
+writer = SummaryWriter('models/'+save_dir)
 
 def validation(diffuseNet, specularNet, dataloader, eps, criterion, device, epoch, mode='kpcn'):
   pass
@@ -111,9 +112,9 @@ def validation(diffuseNet, specularNet, dataloader, eps, criterion, device, epoc
 
       outputDiff = diffuseNet(X_diff)
       # if mode == 'KPCN':
-      if 'decomp' not in mode and 'kpcn' in mode or 'kpal' in mode:
-        X_input = crop_like(X_diff, outputDiff)
-        outputDiff = apply_kernel(outputDiff, X_input, device)
+      # if 'decomp' not in mode and 'kpcn' in mode or 'kpal' in mode:
+      #   X_input = crop_like(X_diff, outputDiff)
+      #   outputDiff = apply_kernel(outputDiff, X_input, device)
 
       Y_diff = crop_like(Y_diff, outputDiff)
       lossDiff += criterion(outputDiff, Y_diff).item()
@@ -123,9 +124,9 @@ def validation(diffuseNet, specularNet, dataloader, eps, criterion, device, epoc
       
       outputSpec = specularNet(X_spec)
       # if mode == 'KPCN':
-      if 'decomp' not in mode and 'kpcn' in mode or 'kpal' in mode:
-        X_input = crop_like(X_spec, outputSpec)
-        outputSpec = apply_kernel(outputSpec, X_input, device)
+      # if 'decomp' not in mode and 'kpcn' in mode or 'kpal' in mode:
+      #   X_input = crop_like(X_spec, outputSpec)
+      #   outputSpec = apply_kernel(outputSpec, X_input, device)
 
       Y_spec = crop_like(Y_spec, outputSpec)
       lossSpec += criterion(outputSpec, Y_spec).item()
@@ -174,16 +175,18 @@ def train(mode, device, trainset, validset, eps, L, input_channels, hidden_chann
   print(L, input_channels, hidden_channels, kernel_size, mode)
   print(mode)
   if mode == 'kpcn':
-    diffuseNet = make_net(L, input_channels, hidden_channels, kernel_size, mode).to(device)
-    specularNet = make_net(L, input_channels, hidden_channels, kernel_size, mode).to(device)
+    # diffuseNet = make_net(L, input_channels, hidden_channels, kernel_size, mode).to(device)
+    # specularNet = make_net(L, input_channels, hidden_channels, kernel_size, mode).to(device)
+    diffuseNet = KPCN(L, input_channels, hidden_channels, kernel_size).to(device)
+    specularNet = KPCN(L, input_channels, hidden_channels, kernel_size).to(device)
   elif mode == 'single_kpal':
     diffuseNet = singleFrameDenoiser(input_channels, hidden_channels, kernel_size=21).to(device)
     specularNet = singleFrameDenoiser(input_channels, hidden_channels, kernel_size=21).to(device)
   elif mode == 'multi_kpcn':
     diffDenoisers, specDenoisers = [], []
     for i in range(3):
-       diffDenoisers.append(make_net(L, input_channels, hidden_channels, kernel_size, mode))
-       specDenoisers.append(make_net(L, input_channels, hidden_channels, kernel_size, mode))
+       diffDenoisers.append(KPCN(L, input_channels, hidden_channels, kernel_size))
+       specDenoisers.append(KPCN(L, input_channels, hidden_channels, kernel_size))
     diffuseNet = multiScaleDenoiser(hidden_channels, diffDenoisers).to(device)
     specularNet = multiScaleDenoiser(hidden_channels, specDenoisers).to(device)
     diffuseNet._load_denoiser('trained_model/kpcn_finetune_2/diff_e{}.pt'.format(4))
@@ -196,6 +199,7 @@ def train(mode, device, trainset, validset, eps, L, input_channels, hidden_chann
   print('# Parameter for diffuseNet : {}'.format(sum([p.numel() for p in diffuseNet.parameters()])))
   print(specularNet, "CUDA:", next(specularNet.parameters()).is_cuda)
   print('# Parameter for specularNet : {}'.format(sum([p.numel() for p in diffuseNet.parameters()])))
+  # print(summary(diffuseNet, input_size=(3, 128, 128)))
 
   if loss == 'L1':
     criterion = nn.L1Loss()
@@ -208,15 +212,15 @@ def train(mode, device, trainset, validset, eps, L, input_channels, hidden_chann
   optimizerDiff = optim.Adam(diffuseNet.parameters(), lr=learning_rate, betas=(0.9, 0.99))
   optimizerSpec = optim.Adam(specularNet.parameters(), lr=learning_rate, betas=(0.9, 0.99))
 
-  # checkpointDiff = torch.load('trained_model/patch_256_kpcn_3/diff_e3.pt')
-  # diffuseNet.load_state_dict(checkpointDiff['model_state_dict'])
-  # optimizerDiff.load_state_dict(checkpointDiff['optimizer_state_dict'])
+  checkpointDiff = torch.load('trained_model/kpcn_finetune_2/diff_e3.pt')
+  diffuseNet.load_state_dict(checkpointDiff['model_state_dict'])
+  optimizerDiff.load_state_dict(checkpointDiff['optimizer_state_dict'])
   # diffuseNet.load_state_dict(torch.load('trained_model/simple_feat_kpcn_2/diff_e8.pt'))
   diffuseNet.train()
 
-  # checkpointSpec = torch.load('trained_model/patch_256_kpcn_3/spec_e3.pt')
-  # specularNet.load_state_dict(checkpointSpec['model_state_dict'])
-  # optimizerSpec.load_state_dict(checkpointSpec['optimizer_state_dict'])
+  checkpointSpec = torch.load('trained_model/kpcn_finetune_2/diff_e3.p')
+  specularNet.load_state_dict(checkpointSpec['model_state_dict'])
+  optimizerSpec.load_state_dict(checkpointSpec['optimizer_state_dict'])
   # specularNet.load_state_dict(torch.load('trained_model/simple_feat_kpcn_2/spec_e8.pt'))
   specularNet.train()
 
@@ -284,11 +288,11 @@ def train(mode, device, trainset, validset, eps, L, input_channels, hidden_chann
       outputDiff = diffuseNet(X_diff)
 
       # if mode == 'KPCN':
-      if 'decomp' not in mode and 'kpcn' in mode or 'kpal' in mode:
-        # print('Outputdiff: ', outputDiff.shape)
-        X_input = crop_like(X_diff, outputDiff)
-        # print('X_input: ', X_input.shape)
-        outputDiff = apply_kernel(outputDiff, X_input, device)
+      # if 'decomp' not in mode and 'kpcn' in mode or 'kpal' in mode:
+      #   # print('Outputdiff: ', outputDiff.shape)
+      #   X_input = crop_like(X_diff, outputDiff)
+      #   # print('X_input: ', X_input.shape)
+      #   outputDiff = apply_kernel(outputDiff, X_input, device)
 
       Y_diff = crop_like(Y_diff, outputDiff)
       # print('DIFF SHAPES : {}, {}'.format(outputDiff.shape, Y_diff.shape))
@@ -308,9 +312,9 @@ def train(mode, device, trainset, validset, eps, L, input_channels, hidden_chann
       outputSpec = specularNet(X_spec)
 
       # if mode == 'KPCN':
-      if 'decomp' not in mode and 'kpcn' in mode or 'kpal' in mode:
-        X_input = crop_like(X_spec, outputSpec)
-        outputSpec = apply_kernel(outputSpec, X_input, device)
+      # if 'decomp' not in mode and 'kpcn' in mode or 'kpal' in mode:
+      #   X_input = crop_like(X_spec, outputSpec)
+      #   outputSpec = apply_kernel(outputSpec, X_input, device)
 
       Y_spec = crop_like(Y_spec, outputSpec)
 

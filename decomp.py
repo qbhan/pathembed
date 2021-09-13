@@ -43,7 +43,7 @@ class decompDenoiser(nn.Module):
         # self.denoiser3 = None
         # self.denoiser4 = None
         if 'kpcn' in mode and pth is not None:
-            self.denoiser1 = make_net(n_layers, in_channel, hidden_channel, kernel_size, mode)
+            self.denoiser1 = KPCN(n_layers, in_channel, hidden_channel, kernel_size)
             # self.denoiser2 = make_net(n_layers, in_channel, hidden_channel, kernel_size, mode)
             # self.denoiser3 = make_net(n_layers, in_channel, hidden_channel, kernel_size, mode)
             # self.denoiser4 = make_net(n_layers, in_channel, hidden_channel, kernel_size, mode)

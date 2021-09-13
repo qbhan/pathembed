@@ -1,3 +1,4 @@
+from utils import apply_kernel, crop_like
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -10,31 +11,63 @@ recon_kernel_size = 21
 import itertools
 import os
 
+class KPCN(nn.Module):
+    def __init__(self, 
+                n_layers, 
+                input_channels, 
+                hidden_channels, 
+                kernel_size, 
+                recon_kernel_size=21):
+        super(KPCN, self).__init__()
+        
+        layers = [
+            nn.Conv2d(input_channels, hidden_channels, kernel_size),
+            nn.ReLU()
+        ]
 
-def make_net(n_layers, input_channels, hidden_channels, kernel_size, mode):
-  # create first layer manually
-  layers = [
-      nn.Conv2d(input_channels, hidden_channels, kernel_size),
-      nn.ReLU()
-  ]
+        for l in range(n_layers-2):
+            layers += [
+            nn.Conv2d(hidden_channels, hidden_channels, kernel_size),
+            nn.ReLU()
+            ] 
+
+        layers += [nn.Conv2d(hidden_channels, recon_kernel_size**2, kernel_size)]
+
+        for layer in layers:
+            if isinstance(layer, nn.Conv2d):
+                nn.init.xavier_uniform_(layer.weight)
+
+        self.layers = nn.Sequential(*layers)
+
+    def forward(self, x):
+        kernel = self.layers(x)
+        x = crop_like(x, kernel)
+        return apply_kernel(kernel, x)
+
+# def make_net(n_layers, input_channels, hidden_channels, kernel_size, mode):
+#   # create first layer manually
+#   layers = [
+#       nn.Conv2d(input_channels, hidden_channels, kernel_size),
+#       nn.ReLU()
+#   ]
   
-  for l in range(n_layers-2):
-    layers += [
-        nn.Conv2d(hidden_channels, hidden_channels, kernel_size),
-        nn.ReLU()
-    ]
+#   for l in range(n_layers-2):
+#     layers += [
+#         nn.Conv2d(hidden_channels, hidden_channels, kernel_size),
+#         nn.ReLU()
+#     ]
     
-    # params = sum(p.numel() for p in layers[-2].parameters() if p.requires_grad)
-    # print("Params : {}".format(params))
+#     # params = sum(p.numel() for p in layers[-2].parameters() if p.requires_grad)
+#     # print("Params : {}".format(params))
     
-  out_channels = 3 if 'dpcn' in mode else recon_kernel_size**2
-  layers += [nn.Conv2d(hidden_channels, out_channels, kernel_size)]#, padding=18)]
+#   out_channels = 3 if 'dpcn' in mode else recon_kernel_size**2
+#   layers += [nn.Conv2d(hidden_channels, out_channels, kernel_size)]#, padding=18)]
   
-  for layer in layers:
-    if isinstance(layer, nn.Conv2d):
-      nn.init.xavier_uniform_(layer.weight)
+#   for layer in layers:
+#     if isinstance(layer, nn.Conv2d):
+#       nn.init.xavier_uniform_(layer.weight)
   
-  return nn.Sequential(*layers)
+#   return nn.Sequential(*layers)
 
 
 # def apply_kernel(weights, data, device):
