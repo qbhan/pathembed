@@ -4,6 +4,7 @@ import torch.nn.functional as F
 import torchvision
 import torchvision.transforms as transforms
 
+# recon_kernel_size = 21
 recon_kernel_size = 21
 
 import itertools

@@ -47,7 +47,7 @@ parser.add_argument('--do_vis_feat', dest='do_vis_feat', action='store_true')
 # parser.set_defaults(do_errormap=False)
 # parser.add_argument('--do_errormap', dest='do_errormap', action='store_true')
 
-save_dir = 'test_simple_kpcn_1_finetune_1'
+save_dir = 'kpcn_k5'
 writer = SummaryWriter('test_runs/'+save_dir)
 
 def unsqueeze_all(d):
