@@ -7,13 +7,13 @@ import matplotlib.pyplot as plt
 import numpy as np
 import os
 
-def apply_kernel(weights, data, device):
+def apply_kernel(weights, data):
     # print('WEIGHTS: {}, DATA : {}'.format(weights.shape, data.shape))
     # apply softmax to kernel weights
     # print(weights.shape)
     recon_kernel_size = int(weights.shape[1]**0.5)
     # print()
-    weights = weights.permute((0, 2, 3, 1)).to(device)
+    weights = weights.permute((0, 2, 3, 1))
     # print(weights.shape, data.shape)
     _, _, h, w = data.size()
     weights = F.softmax(weights, dim=3).view(-1, w * h, recon_kernel_size, recon_kernel_size)
@@ -42,11 +42,11 @@ def apply_kernel(weights, data, device):
         B.append(data[:,2:3,sy:ey,sx:ex])
         #slices.append(data[:,:,sy:ey,sx:ex])
         
-    reds = (torch.cat(R, dim=1).to(device)*weights).sum(2).sum(2)
-    greens = (torch.cat(G, dim=1).to(device)*weights).sum(2).sum(2)
-    blues = (torch.cat(B, dim=1).to(device)*weights).sum(2).sum(2)
+    reds = (torch.cat(R, dim=1)*weights).sum(2).sum(2)
+    greens = (torch.cat(G, dim=1)*weights).sum(2).sum(2)
+    blues = (torch.cat(B, dim=1)*weights).sum(2).sum(2)
     
-    res = torch.cat((reds, greens, blues), dim=1).view(-1, 3, h, w).to(device)
+    res = torch.cat((reds, greens, blues), dim=1).view(-1, 3, h, w)
     # print(res.shape)
     
     return res
