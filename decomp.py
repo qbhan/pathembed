@@ -28,7 +28,7 @@ class decompModule(nn.Module):
 
 # decomp = decompModule()
 # data = torch.randn((8, 34, 128, 128))
-# ret1, ret2 = decomp(data)
+# mask, ret1, ret2 = decomp(data)
 # print(ret1.shape)
 
 
@@ -90,7 +90,7 @@ class decompDenoiser(nn.Module):
 
 
 
-# diffuseNet = decompDenoiser(9, 34, 100, 5, 'kpcn', 'trained_model/kpcn_finetune_2/diff_e{}.pt'.format(4)).to('cuda')
+# diffuseNet = decompDenoiser(9, 34, 100, 5, 'kpcn').to('cuda')
 # x = torch.ones((8, 34, 128, 128)).to('cuda')
 # out1 = diffuseNet(x)
 # print(out1)

@@ -313,7 +313,8 @@ class PathNet(nn.Module):
         return "PathNet i{}in{}o{}".format(self.ic, self.intermc, self.outc)
 
     def forward(self, samples):
-        paths = samples["paths"]
+        # paths = samples["paths"]
+        paths = samples
         bs, spp, nf, h, w = paths.shape
 
         flat = paths.contiguous().view([bs*spp, nf, h, w])
@@ -326,3 +327,5 @@ class PathNet(nn.Module):
             [1, spp, 1, 1, 1]).view(bs*spp, self.intermc, h, w)], 1)
         out = self.final(flat).view([bs, spp, self.outc, h, w])
         return out
+
+# model = PathNet(34)

@@ -22,6 +22,7 @@ from kpcn import *
 from kpal import *
 from multiscale import *
 from decomp import *
+from path import *
 
 from losses import *
 from dataset import MSDenoiseDataset, init_data
@@ -76,6 +77,7 @@ parser.set_defaults(do_feature_dropout=False)
 parser.add_argument('--do_feature_dropout', dest='do_feature_dropout', action='store_true')
 parser.set_defaults(do_finetune=False)
 parser.add_argument('--do_finetune', dest='do_finetune', action='store_true')
+parser.add_argument('--use_llpm_buf', default=False, type=bool)
 parser.set_defaults(do_val=False)
 parser.add_argument('--do_val', dest='do_val', action='store_true')
 parser.set_defaults(do_early_stopping=False)
@@ -86,24 +88,60 @@ parser.add_argument('--lr', default=1e-4, type=float)
 parser.add_argument('--epochs', default=20, type=int)
 parser.add_argument('--loss', default='L1')
 
-save_dir = 'kpcn_1'
+save_dir = 'kpcn_manif_2'
 writer = SummaryWriter('kpcn/'+save_dir)
 
 
-def validation(diffuseNet, specularNet, dataloader, eps, criterion, device, epoch, mode='kpcn'):
+def validation(models, dataloader, eps, criterion, device, epoch, use_llpm_buf, mode='kpcn'):
     pass
     lossDiff = 0
     lossSpec = 0
     lossFinal = 0
     relL2Final = 0
+    lossDiffPath = 0
+    lossSpecPath = 0
     relL2 = RelativeMSE()
+    path_criterion = GlobalRelativeSimilarityLoss()
     # for batch_idx, data in enumerate(dataloader):
     batch_idx = 0
-    diffuseNet, specularNet = diffuseNet.eval(), specularNet.eval()
+    if use_llpm_buf:
+        diffPathNet, specPathNet = models['path_diffuse'].eval(), models['path_specular'].eval()
+    diffuseNet, specularNet = models['diffuse'].eval(), models['specular'].eval()
+
     with torch.no_grad():
-        for data in tqdm(dataloader, leave=False, ncols=70):
-            X_diff = data['kpcn_diffuse_in'].to(device)
-            Y_diff = data['target_diffuse'].to(device)
+        for batch in tqdm(dataloader, leave=False, ncols=70):
+            # print(data.keys())
+            # assert 'paths' in data
+            # print('WORKING WITH PATH')
+            if use_llpm_buf:
+                paths = batch['paths'].to(device)
+                p_buffer_diffuse, p_buffer_specular = diffPathNet(paths), specPathNet(paths)
+                '''Feature Disentanglement'''    
+                #TODO
+                _, _, c, _, _ = p_buffer_diffuse.shape
+                assert c >= 2
+                
+                # Variance
+                p_var_diffuse = p_buffer_diffuse.var(1).mean(1, keepdims=True)
+                p_var_diffuse /= p_buffer_diffuse.shape[1]
+                p_var_specular = p_buffer_specular.var(1).mean(1, keepdims=True)
+                p_var_specular /= p_buffer_specular.shape[1]
+
+                # make new batch
+                batch = {
+                    'target_total': batch['target_total'].to(device),
+                    'target_diffuse': batch['target_diffuse'].to(device),
+                    'target_specular': batch['target_specular'].to(device),
+                    'kpcn_diffuse_in': torch.cat([batch['kpcn_diffuse_in'].to(device), p_buffer_diffuse.mean(1), p_var_diffuse], 1),
+                    'kpcn_specular_in': torch.cat([batch['kpcn_specular_in'].to(device), p_buffer_specular.mean(1), p_var_specular], 1),
+                    'kpcn_diffuse_buffer': batch['kpcn_diffuse_buffer'].to(device),
+                    'kpcn_specular_buffer': batch['kpcn_specular_buffer'].to(device),
+                    'kpcn_albedo': batch['kpcn_albedo'].to(device),
+                }
+
+            X_diff = batch['kpcn_diffuse_in'].to(device)
+            Y_diff = batch['target_diffuse'].to(device)
+
 
             outputDiff = diffuseNet(X_diff)
             # if mode == 'KPCN':
@@ -114,8 +152,8 @@ def validation(diffuseNet, specularNet, dataloader, eps, criterion, device, epoc
             Y_diff = crop_like(Y_diff, outputDiff)
             lossDiff += criterion(outputDiff, Y_diff).item()
 
-            X_spec = data['kpcn_specular_in'].to(device)
-            Y_spec = data['target_specular'].to(device)
+            X_spec = batch['kpcn_specular_in'].to(device)
+            Y_spec = batch['target_specular'].to(device)
             
             outputSpec = specularNet(X_spec)
             # if mode == 'KPCN':
@@ -127,18 +165,26 @@ def validation(diffuseNet, specularNet, dataloader, eps, criterion, device, epoc
             lossSpec += criterion(outputSpec, Y_spec).item()
 
             # calculate final ground truth error
-            albedo = data['kpcn_albedo'].to(device)
+            albedo = batch['kpcn_albedo'].to(device)
             albedo = crop_like(albedo, outputDiff)
             outputFinal = outputDiff * (albedo + eps) + torch.exp(outputSpec) - 1.0
 
-            Y_final = data['target_total'].to(device)
+            Y_final = batch['target_total'].to(device)
             Y_final = crop_like(Y_final, outputFinal)
             lossFinal += criterion(outputFinal, Y_final).item()
             relL2Final += relL2(outputFinal, Y_final).item()
 
+            if use_llpm_buf:
+                p_buffer_diffuse = crop_like(p_buffer_diffuse, outputDiff)
+                loss_manif_diffuse = path_criterion(p_buffer_diffuse, Y_diff)
+                p_buffer_specular = crop_like(p_buffer_specular, outputSpec)
+                loss_manif_specular = path_criterion(p_buffer_specular, Y_spec)
+                # lossDiff += 0.1 * loss_manif_diffuse
+                # lossSpec += 0.1 * loss_manif_specular
+
             # visualize
             if batch_idx == 20:
-                inputFinal = data['kpcn_diffuse_buffer'] * (data['kpcn_albedo'] + eps) + torch.exp(data['kpcn_specular_buffer']) - 1.0
+                inputFinal = batch['kpcn_diffuse_buffer'] * (batch['kpcn_albedo'] + eps) + torch.exp(batch['kpcn_specular_buffer']) - 1.0
                 inputGrid = torchvision.utils.make_grid(inputFinal)
                 writer.add_image('noisy patches e{}'.format(epoch+1), inputGrid)
                 writer.add_image('noisy patches e{}'.format(str(epoch+1)+'_'+str(batch_idx)), inputGrid)
@@ -153,10 +199,25 @@ def validation(diffuseNet, specularNet, dataloader, eps, criterion, device, epoc
 
             batch_idx += 1
 
-    return lossDiff/(4*len(dataloader)), lossSpec/(4*len(dataloader)), lossFinal/(4*len(dataloader)), relL2Final/(4*len(dataloader))
+    return lossDiff/(4*len(dataloader)), lossSpec/(4*len(dataloader)), lossFinal/(4*len(dataloader)), relL2Final/(4*len(dataloader)), loss_manif_diffuse/(4*len(dataloader)), loss_manif_specular/(4*len(dataloader))
 
 
-def train(mode, device, trainset, validset, eps, L, input_channels, hidden_channels, kernel_size, epochs, learning_rate, loss, do_early_stopping, do_feature_dropout, do_finetune):
+def train(mode, 
+        device, 
+        trainset, 
+        validset, 
+        eps, 
+        L, 
+        input_channels, 
+        hidden_channels, 
+        kernel_size, 
+        epochs, 
+        learning_rate, 
+        loss, 
+        do_early_stopping, 
+        do_finetune,
+        use_llpm_buf
+        ):
     dataloader = DataLoader(trainset, batch_size=8, num_workers=1, pin_memory=False)
     print(len(dataloader))
 
@@ -167,8 +228,6 @@ def train(mode, device, trainset, validset, eps, L, input_channels, hidden_chann
     print(L, input_channels, hidden_channels, kernel_size, mode)
     print(mode)
     if mode == 'kpcn':
-        # diffuseNet = make_net(L, input_channels, hidden_channels, kernel_size, mode).to(device)
-        # specularNet = make_net(L, input_channels, hidden_channels, kernel_size, mode).to(device)
         diffuseNet = KPCN(L, input_channels, hidden_channels, kernel_size).to(device)
         specularNet = KPCN(L, input_channels, hidden_channels, kernel_size).to(device)
     elif mode == 'single_kpal':
@@ -187,6 +246,15 @@ def train(mode, device, trainset, validset, eps, L, input_channels, hidden_chann
         diffuseNet = decompDenoiser(L, input_channels, hidden_channels, kernel_size, mode, 'trained_model/kpcn_finetune_2/diff_e{}.pt'.format(4)).to(device)
         specularNet = decompDenoiser(L, input_channels, hidden_channels, kernel_size, mode, 'trained_model/kpcn_finetune_2/spec_e{}.pt'.format(4)).to(device)
 
+    # Path module
+    if use_llpm_buf:
+        diffPathNet = PathNet(trainset.pnet_in_size).to(device)
+        optimizerDiffPath = optim.Adam(specularNet.parameters(), lr=1e-4, betas=(0.9, 0.99))
+        specPathNet = PathNet(trainset.pnet_in_size).to(device)
+        optimizerSpecPath = optim.Adam(specularNet.parameters(), lr=1e-4, betas=(0.9, 0.99))
+        path_criterion = GlobalRelativeSimilarityLoss()
+    # else
+
     print(diffuseNet, "CUDA:", next(diffuseNet.parameters()).is_cuda)
     print('# Parameter for diffuseNet : {}'.format(sum([p.numel() for p in diffuseNet.parameters()])))
     print(specularNet, "CUDA:", next(specularNet.parameters()).is_cuda)
@@ -204,6 +272,7 @@ def train(mode, device, trainset, validset, eps, L, input_channels, hidden_chann
     print('LEARNING RATE : {}'.format(learning_rate))
     optimizerDiff = optim.Adam(diffuseNet.parameters(), lr=learning_rate, betas=(0.9, 0.99))
     optimizerSpec = optim.Adam(specularNet.parameters(), lr=learning_rate, betas=(0.9, 0.99))
+    # optimizerP = optim.Adam(specularNet.parameters(), lr=1e-4, betas=(0.9, 0.99))
 
     # checkpointDiff = torch.load('trained_model/kpcn_finetune_2/diff_e3.pt')
     # diffuseNet.load_state_dict(checkpointDiff['model_state_dict'])
@@ -217,6 +286,7 @@ def train(mode, device, trainset, validset, eps, L, input_channels, hidden_chann
     # specularNet.load_state_dict(torch.load('trained_model/simple_feat_kpcn_2/spec_e8.pt'))
     specularNet.train()
 
+    # pNet.train()
 
     accuLossDiff = 0
     accuLossSpec = 0
@@ -234,15 +304,24 @@ def train(mode, device, trainset, validset, eps, L, input_channels, hidden_chann
     # epoch = checkpointDiff['epoch']
     epoch = 0
     print('Check Initialization')
-    initLossDiff, initLossSpec, initLossFinal, relL2LossFinal = validation(diffuseNet, specularNet, validDataloader, eps, criterion, device, -1, mode)
+    models = {'diffuse': diffuseNet, 'specular': specularNet}
+    if use_llpm_buf:
+        models['path_diffuse'] = diffPathNet
+        models['path_specular'] = specPathNet
+        # models.append({'path_diffuse': diffPathNet, 'path_specular': specPathNet})
+    initLossDiff, initLossSpec, initLossFinal, relL2LossFinal, pathDiffLoss, pathSpecLoss = validation(models, validDataloader, eps, criterion, device, -1, use_llpm_buf,mode)
     print("initLossDiff: {}".format(initLossDiff))
     print("initLossSpec: {}".format(initLossSpec))
     print("initLossFinal: {}".format(initLossFinal))
     print("relL2LossFinal: {}".format(relL2LossFinal))
+    print("pathDiffLoss: {}".format(pathDiffLoss))
+    print("pathSpecLoss: {}".format(pathSpecLoss))
     writer.add_scalar('Valid total relL2 loss', relL2LossFinal if relL2LossFinal != float('inf') else 0, (epoch + 1) * len(validDataloader))
     writer.add_scalar('Valid total loss', initLossFinal if initLossFinal != float('inf') else 0, (epoch + 1) * len(validDataloader))
     writer.add_scalar('Valid diffuse loss', initLossDiff if initLossDiff != float('inf') else 0, (epoch + 1) * len(validDataloader))
     writer.add_scalar('Valid specular loss', initLossSpec if initLossSpec != float('inf') else 0, (epoch + 1) * len(validDataloader))
+    writer.add_scalar('Valid path diffuse loss', pathDiffLoss if pathDiffLoss != float('inf') else 0, (epoch + 1) * len(validDataloader))
+    writer.add_scalar('Valid path specular loss', pathSpecLoss if pathSpecLoss != float('inf') else 0, (epoch + 1) * len(validDataloader))
 
 
     import time
@@ -254,69 +333,95 @@ def train(mode, device, trainset, validset, eps, L, input_channels, hidden_chann
         print('EPOCH {}'.format(epoch+1))
         diffuseNet.train()
         specularNet.train()
-        # for i_batch, sample_batched in enumerate(dataloader):
         i_batch = -1
-        for sample_batched in tqdm(dataloader, leave=False, ncols=70):
+        for batch in tqdm(dataloader, leave=False, ncols=70):
             i_batch += 1
             # print(sample_batched.keys())
 
-            # get the inputs
-            X_diff = sample_batched['kpcn_diffuse_in'].to(device)
-            # X_diff = feature_dropout(X_diff, 1.0, device)
+            loss_manif = None
+            if use_llpm_buf:
+                paths = batch['paths'].to(device)
+                diffPathNet.train()
+                specPathNet.train()
+                p_buffer_diffuse, p_buffer_specular = diffPathNet(paths), specPathNet(paths)
+                '''Feature Disentanglement'''    
+                #TODO
+                _, _, c, _, _ = p_buffer_diffuse.shape
+                assert c >= 2
+                
+                # Variance
+                p_var_diffuse = p_buffer_diffuse.var(1).mean(1, keepdims=True)
+                p_var_diffuse /= p_buffer_diffuse.shape[1]
+                p_var_specular = p_buffer_specular.var(1).mean(1, keepdims=True)
+                p_var_specular /= p_buffer_specular.shape[1]
 
-            Y_diff = sample_batched['target_diffuse'].to(device)
-            # Y_diff = feature_dropout(Y_diff, 1.0, device)
-            # print(X_diff.shape, Y_diff.shape)
+                # make new batch
+                batch = {
+                    'target_total': batch['target_total'].to(device),
+                    'target_diffuse': batch['target_diffuse'].to(device),
+                    'target_specular': batch['target_specular'].to(device),
+                    'kpcn_diffuse_in': torch.cat([batch['kpcn_diffuse_in'].to(device), p_buffer_diffuse.mean(1), p_var_diffuse], 1),
+                    'kpcn_specular_in': torch.cat([batch['kpcn_specular_in'].to(device), p_buffer_specular.mean(1), p_var_specular], 1),
+                    'kpcn_diffuse_buffer': batch['kpcn_diffuse_buffer'].to(device),
+                    'kpcn_specular_buffer': batch['kpcn_specular_buffer'].to(device),
+                    'kpcn_albedo': batch['kpcn_albedo'].to(device),
+                }
+
             # zero the parameter gradients
             optimizerDiff.zero_grad()
+            optimizerSpec.zero_grad()
+            optimizerDiffPath.zero_grad()
+            optimizerSpecPath.zero_grad()
 
-            # forward + backward + optimize
+            # get the inputs
+            X_diff = batch['kpcn_diffuse_in'].to(device)
+
+            Y_diff = batch['target_diffuse'].to(device)
+
             outputDiff = diffuseNet(X_diff)
-
-            # if mode == 'KPCN':
-            # if 'decomp' not in mode and 'kpcn' in mode or 'kpal' in mode:
-            #   # print('Outputdiff: ', outputDiff.shape)
-            #   X_input = crop_like(X_diff, outputDiff)
-            #   # print('X_input: ', X_input.shape)
-            #   outputDiff = apply_kernel(outputDiff, X_input, device)
 
             Y_diff = crop_like(Y_diff, outputDiff)
 
 
             # get the inputs
-            X_spec = sample_batched['kpcn_specular_in'].to(device)
-            Y_spec = sample_batched['target_specular'].to(device)
+            X_spec = batch['kpcn_specular_in'].to(device)
+            Y_spec = batch['target_specular'].to(device)
 
-            # zero the parameter gradients
-            optimizerSpec.zero_grad()
+            
 
             # forward + backward + optimize
             outputSpec = specularNet(X_spec)
 
-            # if mode == 'KPCN':
-            # if 'decomp' not in mode and 'kpcn' in mode or 'kpal' in mode:
-            #   X_input = crop_like(X_spec, outputSpec)
-            #   outputSpec = apply_kernel(outputSpec, X_input, device)
-
             Y_spec = crop_like(Y_spec, outputSpec)
             lossDiff = criterion(outputDiff, Y_diff)
             lossSpec = criterion(outputSpec, Y_spec)
+
+            # loss
+            if use_llpm_buf:
+                p_buffer_diffuse = crop_like(p_buffer_diffuse, outputDiff)
+                loss_manif_diffuse = path_criterion(p_buffer_diffuse, Y_diff)
+                p_buffer_specular = crop_like(p_buffer_specular, outputSpec)
+                loss_manif_specular = path_criterion(p_buffer_specular, Y_spec)
+                lossDiff += 0.1 * loss_manif_diffuse
+                lossSpec += 0.1 * loss_manif_specular
+                
 
             if not do_finetune:
                 lossDiff.backward()
                 optimizerDiff.step()
                 lossSpec.backward()
                 optimizerSpec.step()
+                if use_llpm_buf:
+                    optimizerDiffPath.step()
+                    optimizerSpecPath.step()
 
             # calculate final ground truth error
             # with torch.no_grad():
-            # albedo = sample_batched['origAlbedo'].permute(permutation).to(device)
-            albedo = sample_batched['kpcn_albedo'].to(device)
+            albedo = batch['kpcn_albedo'].to(device)
             albedo = crop_like(albedo, outputDiff)
-            # print('ALBEDO SIZE: {}'.format(sample_batched['kpcn_albedo'].shape))
             outputFinal = outputDiff * (albedo + eps) + torch.exp(outputSpec) - 1.0
 
-            Y_final = sample_batched['target_total'].to(device)
+            Y_final = batch['target_total'].to(device)
 
             Y_final = crop_like(Y_final, outputFinal)
 
@@ -356,17 +461,36 @@ def train(mode, device, trainset, validset, eps, L, input_channels, hidden_chann
                 'model_state_dict': specularNet.state_dict(),
                 'optimizer_state_dict': optimizerSpec.state_dict(),
                 }, 'trained_model/'+ save_dir + '/spec_e{}.pt'.format(epoch+1))
+        torch.save({
+                'epoch': epoch,
+                'model_state_dict': diffPathNet.state_dict(),
+                'optimizer_state_dict': optimizerDiffPath.state_dict(),
+                }, 'trained_model/'+ save_dir + '/path_diff_e{}.pt'.format(epoch+1))
+        torch.save({
+                'epoch': epoch,
+                'model_state_dict': specPathNet.state_dict(),
+                'optimizer_state_dict': optimizerSpecPath.state_dict(),
+                }, 'trained_model/'+ save_dir + '/path_spec_e{}.pt'.format(epoch+1))
         # print('VALIDATION WORKING!')
-        validLossDiff, validLossSpec, validLossFinal, relL2LossFinal = validation(diffuseNet, specularNet, validDataloader, eps, criterion, device, epoch, mode)
+        models = {'diffuse': diffuseNet, 'specular': specularNet}
+        if use_llpm_buf:
+            models['path_diffuse'] = diffPathNet
+            models['path_specular'] = specPathNet
+        validLossDiff, validLossSpec, validLossFinal, relL2LossFinal, pathDiffLoss, pathSpecLoss = validation(models, validDataloader, eps, criterion, device, epoch, use_llpm_buf,mode)
         writer.add_scalar('Valid total relL2 loss', relL2LossFinal if relL2LossFinal != float('inf') else 1e+35, (epoch + 1) * len(dataloader))
         writer.add_scalar('Valid total loss', validLossFinal if accuLossFinal != float('inf') else 1e+35, (epoch + 1) * len(dataloader))
         writer.add_scalar('Valid diffuse loss', validLossDiff if accuLossDiff != float('inf') else 1e+35, (epoch + 1) * len(dataloader))
         writer.add_scalar('Valid specular loss', validLossSpec if accuLossSpec != float('inf') else 1e+35, (epoch + 1) * len(dataloader))
+        writer.add_scalar('Valid path diffuse loss', pathDiffLoss if pathDiffLoss != float('inf') else 0, (epoch + 1) * len(dataloader))
+        writer.add_scalar('Valid path specular loss', pathSpecLoss if pathSpecLoss != float('inf') else 0, (epoch + 1) * len(dataloader))
+
 
         print("Epoch {}".format(epoch + 1))
         print("LossDiff: {}".format(accuLossDiff))
         print("LossSpec: {}".format(accuLossSpec))
         print("LossFinal: {}".format(accuLossFinal))
+        print("pathDiffLoss: {}".format(pathDiffLoss))
+        print("pathSpecLoss: {}".format(pathSpecLoss))
         print("ValidrelL2LossDiff: {}".format(relL2LossFinal))
         print("ValidLossDiff: {}".format(validLossDiff))
         print("ValidLossSpec: {}".format(validLossSpec))
@@ -439,9 +563,9 @@ def main():
         args.epochs, 
         args.lr, 
         args.loss, 
-        args.do_early_stopping, 
-        args.do_feature_dropout,
-        args.do_finetune
+        args.do_early_stopping,
+        args.do_finetune,
+        args.use_llpm_buf
         )
   
 

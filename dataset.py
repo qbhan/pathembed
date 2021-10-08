@@ -320,7 +320,10 @@ class DenoiseDataset(Dataset):
         self.samples = None
     
     def __len__(self):
-        return len(self.gt_files) * self.patches_per_image
+        if self.mode == 'train':
+            return len(self.gt_files) * self.patches_per_image // 2
+        else:
+            return len(self.gt_files) * self.patches_per_image
         # return len(self.gt_files) * 8
 
 # Preprocessing
@@ -1078,6 +1081,7 @@ class DenoiseDataset(Dataset):
             
             # Input processing
             in_fn = self.gt_files[img_idx].replace(os.sep + 'gt' + os.sep, os.sep + 'input' + os.sep)
+            # print(in_fn)
             
             if (self.base_model == self.SBMC):
                 sbmc_s_fn = in_fn[:in_fn.rfind('.')] + '_sbmc_s' + in_fn[in_fn.rfind('.'):]
@@ -1141,6 +1145,10 @@ class DenoiseDataset(Dataset):
             if (self.use_llpm_buf):
                 llpm_fn = in_fn[:in_fn.rfind('.')] + '_llpm' + in_fn[in_fn.rfind('.'):]
                 llpm_fn = llpm_fn.replace(os.sep + 'KPCN' + os.sep, os.sep + 'LLPM' + os.sep)
+                # print(in_fn, llpm_fn)
+                file = '/'.join(llpm_fn.split('/')[-3:])
+                llpm_fn = '/root/LLPM/' + file
+                # llpm_fn.replace(os.sep + 'KPCN' + os.sep, os.sep + 'LLPM' + os.sep)
                 llpm_fn = get_valid_path(llpm_fn)
 
                 _in = np.load(llpm_fn, mmap_mode='r')[...,:self.spp,:]
@@ -1524,12 +1532,12 @@ def init_data(args):
     # datasets['train'] = MSDenoiseDataset(args.data_dir, 8, 'kpcn', 'train', args.batch_size, 'random',
     #     use_g_buf=True, use_sbmc_buf=False, use_llpm_buf=False, pnet_out_size=3)
     datasets['train'] = DenoiseDataset(args.data_dir, 8, 'kpcn', 'train', args.batch_size, 'random',
-      use_g_buf=True, use_sbmc_buf=False, use_llpm_buf=False, pnet_out_size=3)
+      use_g_buf=True, use_sbmc_buf=False, use_llpm_buf=args.use_llpm_buf, pnet_out_size=3)
     # print('DATASET sample length ', len(datasets['train'].samples))
     # datasets['val'] = MSDenoiseDataset(args.data_dir, 8, 'kpcn', 'val', 4, 'grid',
     #     use_g_buf=True, use_sbmc_buf=False, use_llpm_buf=False, pnet_out_size=3)
     datasets['val'] = DenoiseDataset(args.data_dir, 8, 'kpcn', 'val', 4, 'grid',
-        use_g_buf=True, use_sbmc_buf=False, use_llpm_buf=False, pnet_out_size=3)
+        use_g_buf=True, use_sbmc_buf=False, use_llpm_buf=args.use_llpm_buf, pnet_out_size=3)
     
     # Initialize dataloaders
     dataloaders = {}
