@@ -7,7 +7,7 @@ import torchvision.utils
 import torch.optim as optim
 from torch.utils.data import DataLoader
 from tensorboardX import SummaryWriter
-from torchsummary import summary
+# from torchsummary import summary
 
 import matplotlib.pyplot as plt
 import os
@@ -88,7 +88,7 @@ parser.add_argument('--lr', default=1e-4, type=float)
 parser.add_argument('--epochs', default=20, type=int)
 parser.add_argument('--loss', default='L1')
 
-save_dir = 'kpcn_manif_2'
+save_dir = 'kpcn_d/4'
 writer = SummaryWriter('kpcn/'+save_dir)
 
 
@@ -179,6 +179,8 @@ def validation(models, dataloader, eps, criterion, device, epoch, use_llpm_buf, 
                 loss_manif_diffuse = path_criterion(p_buffer_diffuse, Y_diff)
                 p_buffer_specular = crop_like(p_buffer_specular, outputSpec)
                 loss_manif_specular = path_criterion(p_buffer_specular, Y_spec)
+                lossDiffPath += loss_manif_diffuse
+                lossSpecPath += loss_manif_specular
                 # lossDiff += 0.1 * loss_manif_diffuse
                 # lossSpec += 0.1 * loss_manif_specular
 
@@ -199,7 +201,7 @@ def validation(models, dataloader, eps, criterion, device, epoch, use_llpm_buf, 
 
             batch_idx += 1
 
-    return lossDiff/(4*len(dataloader)), lossSpec/(4*len(dataloader)), lossFinal/(4*len(dataloader)), relL2Final/(4*len(dataloader)), loss_manif_diffuse/(4*len(dataloader)), loss_manif_specular/(4*len(dataloader))
+    return lossDiff/(4*len(dataloader)), lossSpec/(4*len(dataloader)), lossFinal/(4*len(dataloader)), relL2Final/(4*len(dataloader)), lossDiffPath/(4*len(dataloader)), lossSpecPath/(4*len(dataloader))
 
 
 def train(mode, 
@@ -253,6 +255,16 @@ def train(mode,
         specPathNet = PathNet(trainset.pnet_in_size).to(device)
         optimizerSpecPath = optim.Adam(specularNet.parameters(), lr=1e-4, betas=(0.9, 0.99))
         path_criterion = GlobalRelativeSimilarityLoss()
+
+        # checkpointDiffPath = torch.load('trained_model/kpcn_manif_2/path_diff_e2.pt')
+        # diffPathNet.load_state_dict(checkpointDiffPath['model_state_dict'])
+        # optimizerDiffPath.load_state_dict(checkpointDiffPath['optimizer_state_dict'])
+        # diffPathNet.train()
+
+        # checkpointSpecPath = torch.load('trained_model/kpcn_manif_2/path_spec_e2.pt')
+        # specPathNet.load_state_dict(checkpointSpecPath['model_state_dict'])
+        # optimizerSpecPath.load_state_dict(checkpointSpecPath['optimizer_state_dict'])
+        # specPathNet.train()
     # else
 
     print(diffuseNet, "CUDA:", next(diffuseNet.parameters()).is_cuda)
@@ -274,17 +286,17 @@ def train(mode,
     optimizerSpec = optim.Adam(specularNet.parameters(), lr=learning_rate, betas=(0.9, 0.99))
     # optimizerP = optim.Adam(specularNet.parameters(), lr=1e-4, betas=(0.9, 0.99))
 
-    # checkpointDiff = torch.load('trained_model/kpcn_finetune_2/diff_e3.pt')
+    # checkpointDiff = torch.load('trained_model/kpcn_manif_2/diff_e2.pt')
     # diffuseNet.load_state_dict(checkpointDiff['model_state_dict'])
     # optimizerDiff.load_state_dict(checkpointDiff['optimizer_state_dict'])
-    # diffuseNet.load_state_dict(torch.load('trained_model/simple_feat_kpcn_2/diff_e8.pt'))
     diffuseNet.train()
 
-    # checkpointSpec = torch.load('trained_model/kpcn_finetune_2/diff_e3.p')
+    # checkpointSpec = torch.load('trained_model/kpcn_manif_2/spec_e2.pt')
     # specularNet.load_state_dict(checkpointSpec['model_state_dict'])
     # optimizerSpec.load_state_dict(checkpointSpec['optimizer_state_dict'])
-    # specularNet.load_state_dict(torch.load('trained_model/simple_feat_kpcn_2/spec_e8.pt'))
     specularNet.train()
+
+
 
     # pNet.train()
 
@@ -303,25 +315,25 @@ def train(mode,
     total_epoch = 0
     # epoch = checkpointDiff['epoch']
     epoch = 0
-    print('Check Initialization')
-    models = {'diffuse': diffuseNet, 'specular': specularNet}
-    if use_llpm_buf:
-        models['path_diffuse'] = diffPathNet
-        models['path_specular'] = specPathNet
-        # models.append({'path_diffuse': diffPathNet, 'path_specular': specPathNet})
-    initLossDiff, initLossSpec, initLossFinal, relL2LossFinal, pathDiffLoss, pathSpecLoss = validation(models, validDataloader, eps, criterion, device, -1, use_llpm_buf,mode)
-    print("initLossDiff: {}".format(initLossDiff))
-    print("initLossSpec: {}".format(initLossSpec))
-    print("initLossFinal: {}".format(initLossFinal))
-    print("relL2LossFinal: {}".format(relL2LossFinal))
-    print("pathDiffLoss: {}".format(pathDiffLoss))
-    print("pathSpecLoss: {}".format(pathSpecLoss))
-    writer.add_scalar('Valid total relL2 loss', relL2LossFinal if relL2LossFinal != float('inf') else 0, (epoch + 1) * len(validDataloader))
-    writer.add_scalar('Valid total loss', initLossFinal if initLossFinal != float('inf') else 0, (epoch + 1) * len(validDataloader))
-    writer.add_scalar('Valid diffuse loss', initLossDiff if initLossDiff != float('inf') else 0, (epoch + 1) * len(validDataloader))
-    writer.add_scalar('Valid specular loss', initLossSpec if initLossSpec != float('inf') else 0, (epoch + 1) * len(validDataloader))
-    writer.add_scalar('Valid path diffuse loss', pathDiffLoss if pathDiffLoss != float('inf') else 0, (epoch + 1) * len(validDataloader))
-    writer.add_scalar('Valid path specular loss', pathSpecLoss if pathSpecLoss != float('inf') else 0, (epoch + 1) * len(validDataloader))
+    # print('Check Initialization')
+    # models = {'diffuse': diffuseNet, 'specular': specularNet}
+    # if use_llpm_buf:
+    #     models['path_diffuse'] = diffPathNet
+    #     models['path_specular'] = specPathNet
+    #     # models.append({'path_diffuse': diffPathNet, 'path_specular': specPathNet})
+    # initLossDiff, initLossSpec, initLossFinal, relL2LossFinal, pathDiffLoss, pathSpecLoss = validation(models, validDataloader, eps, criterion, device, -1, use_llpm_buf,mode)
+    # print("initLossDiff: {}".format(initLossDiff))
+    # print("initLossSpec: {}".format(initLossSpec))
+    # print("initLossFinal: {}".format(initLossFinal))
+    # print("relL2LossFinal: {}".format(relL2LossFinal))
+    # print("pathDiffLoss: {}".format(pathDiffLoss))
+    # print("pathSpecLoss: {}".format(pathSpecLoss))
+    # writer.add_scalar('Valid total relL2 loss', relL2LossFinal if relL2LossFinal != float('inf') else 0, (epoch + 1) * len(validDataloader))
+    # writer.add_scalar('Valid total loss', initLossFinal if initLossFinal != float('inf') else 0, (epoch + 1) * len(validDataloader))
+    # writer.add_scalar('Valid diffuse loss', initLossDiff if initLossDiff != float('inf') else 0, (epoch + 1) * len(validDataloader))
+    # writer.add_scalar('Valid specular loss', initLossSpec if initLossSpec != float('inf') else 0, (epoch + 1) * len(validDataloader))
+    # writer.add_scalar('Valid path diffuse loss', pathDiffLoss if pathDiffLoss != float('inf') else 0, (epoch + 1) * len(validDataloader))
+    # writer.add_scalar('Valid path specular loss', pathSpecLoss if pathSpecLoss != float('inf') else 0, (epoch + 1) * len(validDataloader))
 
 
     import time
@@ -370,8 +382,9 @@ def train(mode,
             # zero the parameter gradients
             optimizerDiff.zero_grad()
             optimizerSpec.zero_grad()
-            optimizerDiffPath.zero_grad()
-            optimizerSpecPath.zero_grad()
+            if use_llpm_buf:
+                optimizerDiffPath.zero_grad()
+                optimizerSpecPath.zero_grad()
 
             # get the inputs
             X_diff = batch['kpcn_diffuse_in'].to(device)
@@ -461,16 +474,18 @@ def train(mode,
                 'model_state_dict': specularNet.state_dict(),
                 'optimizer_state_dict': optimizerSpec.state_dict(),
                 }, 'trained_model/'+ save_dir + '/spec_e{}.pt'.format(epoch+1))
-        torch.save({
-                'epoch': epoch,
-                'model_state_dict': diffPathNet.state_dict(),
-                'optimizer_state_dict': optimizerDiffPath.state_dict(),
-                }, 'trained_model/'+ save_dir + '/path_diff_e{}.pt'.format(epoch+1))
-        torch.save({
-                'epoch': epoch,
-                'model_state_dict': specPathNet.state_dict(),
-                'optimizer_state_dict': optimizerSpecPath.state_dict(),
-                }, 'trained_model/'+ save_dir + '/path_spec_e{}.pt'.format(epoch+1))
+
+        if use_llpm_buf:
+            torch.save({
+                    'epoch': epoch,
+                    'model_state_dict': diffPathNet.state_dict(),
+                    'optimizer_state_dict': optimizerDiffPath.state_dict(),
+                    }, 'trained_model/'+ save_dir + '/path_diff_e{}.pt'.format(epoch+1))
+            torch.save({
+                    'epoch': epoch,
+                    'model_state_dict': specPathNet.state_dict(),
+                    'optimizer_state_dict': optimizerSpecPath.state_dict(),
+                    }, 'trained_model/'+ save_dir + '/path_spec_e{}.pt'.format(epoch+1))
         # print('VALIDATION WORKING!')
         models = {'diffuse': diffuseNet, 'specular': specularNet}
         if use_llpm_buf:

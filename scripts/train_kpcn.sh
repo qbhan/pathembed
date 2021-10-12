@@ -8,5 +8,5 @@ python train.py \
   --lr 1e-4 \
   --epochs 40 \
   --loss 'L1' \
-  --use_llpm_buf True\
-  --data_dir '/root/kpcn_data/kpcn_data/data'
+  --data_dir '/root/kpcn_data/kpcn_data/data' \
+    # --use_llpm_buf False\

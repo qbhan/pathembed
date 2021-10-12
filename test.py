@@ -11,6 +11,7 @@ import csv
 
 from utils import *
 from kpcn import *
+from path import *
 from dataset import DenoiseDataset
 from losses import *
 
@@ -26,10 +27,11 @@ parser.add_argument('--num_layers', default=9, type=int)
 parser.add_argument('--input_channels', default=34, type=int)
 parser.add_argument('--hidden_channels', default=100, type=int)
 parser.add_argument('--kernel_size', default=5, type=int)
-
+parser.add_argument('--use_llpm_buf', default=False, type=bool)
 parser.add_argument('--diffuse_model')
 parser.add_argument('--specular_model')
-
+parser.add_argument('--path_diffuse_model', default=None)
+parser.add_argument('--path_specular_model', default=None)
 parser.add_argument('--data_dir')
 parser.add_argument('--save_dir')
 
@@ -38,11 +40,11 @@ parser.add_argument('--do_vis_feat', dest='do_vis_feat', action='store_true')
 # parser.set_defaults(do_errormap=False)
 # parser.add_argument('--do_errormap', dest='do_errormap', action='store_true')
 
-save_dir = 'kpcn_k5'
+save_dir = 'kpcn_manif_2'
 writer = SummaryWriter('test_runs/'+save_dir)
 
 
-def denoise(diffuseNet, specularNet, dataloader, device, mode, save_dir, do_vis_feat, debug=False):
+def denoise(models, dataloader, device, mode, save_dir, do_vis_feat, use_llpm_buf, debug=False):
     print(len(dataloader))
     with torch.no_grad():
         criterion = nn.L1Loss()
@@ -53,6 +55,10 @@ def denoise(diffuseNet, specularNet, dataloader, device, mode, save_dir, do_vis_
         input_image = torch.zeros((3, 960, 960)).to(device)
         gt_image = torch.zeros((3, 960, 960)).to(device)
         output_image = torch.zeros((3, 960, 960)).to(device)
+
+        diffuseNet, specularNet, diffPathNet, specDiffNet = models['diffuse'], models['specular'], None, None
+        if use_llpm_buf:
+            diffPathNet, specPathNet = models['path_diffuse'], models['path_specular']
 
         # Auxiliary features
         if do_vis_feat:
@@ -81,10 +87,36 @@ def denoise(diffuseNet, specularNet, dataloader, device, mode, save_dir, do_vis_
         error_map = torch.zeros((3, 960, 960)).to(device)
 
         x, y = 0, 0
-        for data in tqdm(dataloader, leave=False, ncols=70):
+        for batch in tqdm(dataloader, leave=False, ncols=70):
             # print(x, y)
-            X_diff = data['kpcn_diffuse_in'].to(device)
-            Y_diff = data['target_diffuse'].to(device)
+            if use_llpm_buf:
+                paths = batch['paths'].to(device)
+                p_buffer_diffuse, p_buffer_specular = diffPathNet(paths), specPathNet(paths)
+                '''Feature Disentanglement'''    
+                #TODO
+                _, _, c, _, _ = p_buffer_diffuse.shape
+                assert c >= 2
+                
+                # Variance
+                p_var_diffuse = p_buffer_diffuse.var(1).mean(1, keepdims=True)
+                p_var_diffuse /= p_buffer_diffuse.shape[1]
+                p_var_specular = p_buffer_specular.var(1).mean(1, keepdims=True)
+                p_var_specular /= p_buffer_specular.shape[1]
+
+                # make new batch
+                batch = {
+                    'target_total': batch['target_total'].to(device),
+                    'target_diffuse': batch['target_diffuse'].to(device),
+                    'target_specular': batch['target_specular'].to(device),
+                    'kpcn_diffuse_in': torch.cat([batch['kpcn_diffuse_in'].to(device), p_buffer_diffuse.mean(1), p_var_diffuse], 1),
+                    'kpcn_specular_in': torch.cat([batch['kpcn_specular_in'].to(device), p_buffer_specular.mean(1), p_var_specular], 1),
+                    'kpcn_diffuse_buffer': batch['kpcn_diffuse_buffer'].to(device),
+                    'kpcn_specular_buffer': batch['kpcn_specular_buffer'].to(device),
+                    'kpcn_albedo': batch['kpcn_albedo'].to(device),
+                }
+
+            X_diff = batch['kpcn_diffuse_in'].to(device)
+            Y_diff = batch['target_diffuse'].to(device)
 
             outputDiff = diffuseNet(X_diff)
             # if mode == 'KPCN':
@@ -96,8 +128,8 @@ def denoise(diffuseNet, specularNet, dataloader, device, mode, save_dir, do_vis_
             lossDiff += criterion(outputDiff, Y_diff).item()
             scenelossDiff += criterion(outputDiff, Y_diff).item()
 
-            X_spec = data['kpcn_specular_in'].to(device)
-            Y_spec = data['target_specular'].to(device)
+            X_spec = batch['kpcn_specular_in'].to(device)
+            Y_spec = batch['target_specular'].to(device)
             
             outputSpec = specularNet(X_spec)
             # if mode == 'KPCN':
@@ -110,11 +142,11 @@ def denoise(diffuseNet, specularNet, dataloader, device, mode, save_dir, do_vis_
             scenelossSpec += criterion(outputSpec, Y_spec).item()
 
             # calculate final ground truth error
-            albedo = data['kpcn_albedo'].to(device)
+            albedo = batch['kpcn_albedo'].to(device)
             albedo = crop_like(albedo, outputDiff)
             outputFinal = outputDiff * (albedo + eps) + torch.exp(outputSpec) - 1.0
 
-            Y_final = data['target_total'].to(device)
+            Y_final = batch['target_total'].to(device)
             Y_final = crop_like(Y_final, outputFinal)
             # print(lossFinal, relL2Final)
             lossFinal += criterion(outputFinal, Y_final).item()
@@ -124,7 +156,7 @@ def denoise(diffuseNet, specularNet, dataloader, device, mode, save_dir, do_vis_
 
 
             # visualize
-            inputFinal = data['kpcn_diffuse_buffer'] * (data['kpcn_albedo'] + eps) + torch.exp(data['kpcn_specular_buffer']) - 1.0
+            inputFinal = batch['kpcn_diffuse_buffer'] * (batch['kpcn_albedo'] + eps) + torch.exp(batch['kpcn_specular_buffer']) - 1.0
 
 
             # print(np.shape(inputFinal))
@@ -137,26 +169,26 @@ def denoise(diffuseNet, specularNet, dataloader, device, mode, save_dir, do_vis_
 
 
             if do_vis_feat:
-                diff_rad[:, x*64:x*64+64, y*64:y*64+64] = data['kpcn_diffuse_in'][:,:3,:,:][0, :3, 32:96, 32:96]
-                diff_rad_var[:, x*64:x*64+64, y*64:y*64+64] = data['kpcn_diffuse_in'][:,3,:,:][0, 32:96, 32:96]
-                diff_rad_dx[:, x*64:x*64+64, y*64:y*64+64] = data['kpcn_diffuse_in'][:,4:7,:,:][0, :, 32:96, 32:96]
-                diff_rad_dy[:, x*64:x*64+64, y*64:y*64+64] = data['kpcn_diffuse_in'][:,7:10,:,:][0, :, 32:96, 32:96]
-                spec_rad[:, x*64:x*64+64, y*64:y*64+64] = data['kpcn_specular_in'][:,:3,:,:][0, :3, 32:96, 32:96]
-                spec_rad_var[:, x*64:x*64+64, y*64:y*64+64] = data['kpcn_specular_in'][:,3,:,:][0, 32:96, 32:96]
-                spec_rad_dx[:, x*64:x*64+64, y*64:y*64+64] = data['kpcn_specular_in'][:,4:7,:,:][0, :, 32:96, 32:96]
-                spec_rad_dy[:, x*64:x*64+64, y*64:y*64+64] = data['kpcn_specular_in'][:,7:10,:,:][0, :, 32:96, 32:96]
-                normal[:, x*64:x*64+64, y*64:y*64+64] = data['kpcn_diffuse_in'][:,10:13,:,:][0, :, 32:96, 32:96]
-                normal_var[:, x*64:x*64+64, y*64:y*64+64] = data['kpcn_diffuse_in'][:,13,:,:][0, 32:96, 32:96]
-                normal_dx[:, x*64:x*64+64, y*64:y*64+64] = data['kpcn_diffuse_in'][:,14:17,:,:][0, :, 32:96, 32:96]
-                normal_dy[:, x*64:x*64+64, y*64:y*64+64] = data['kpcn_diffuse_in'][:,17:20,:,:][0, :, 32:96, 32:96]
-                depth[:, x*64:x*64+64, y*64:y*64+64] = data['kpcn_diffuse_in'][:,20,:,:][0, 32:96, 32:96]
-                depth_var[:, x*64:x*64+64, y*64:y*64+64] = data['kpcn_diffuse_in'][:,21,:,:][0, 32:96, 32:96]
-                depth_dx[:, x*64:x*64+64, y*64:y*64+64] = data['kpcn_diffuse_in'][:,22,:,:][0, 32:96, 32:96]
-                depth_dy[:, x*64:x*64+64, y*64:y*64+64] = data['kpcn_diffuse_in'][:,23,:,:][0, 32:96, 32:96]
-                albedo_in[:, x*64:x*64+64, y*64:y*64+64] = data['kpcn_diffuse_in'][:,24:27,:,:][0, :, 32:96, 32:96]
-                albedo_in_var[:, x*64:x*64+64, y*64:y*64+64] = data['kpcn_diffuse_in'][:,27,:,:][0, 32:96, 32:96]
-                albedo_in_dx[:, x*64:x*64+64, y*64:y*64+64] = data['kpcn_diffuse_in'][:,28:31,:,:][0, :, 32:96, 32:96]
-                albedo_in_dy[:, x*64:x*64+64, y*64:y*64+64] = data['kpcn_diffuse_in'][:,31:34,:,:][0, :, 32:96, 32:96]
+                diff_rad[:, x*64:x*64+64, y*64:y*64+64] = batch['kpcn_diffuse_in'][:,:3,:,:][0, :3, 32:96, 32:96]
+                diff_rad_var[:, x*64:x*64+64, y*64:y*64+64] = batch['kpcn_diffuse_in'][:,3,:,:][0, 32:96, 32:96]
+                diff_rad_dx[:, x*64:x*64+64, y*64:y*64+64] = batch['kpcn_diffuse_in'][:,4:7,:,:][0, :, 32:96, 32:96]
+                diff_rad_dy[:, x*64:x*64+64, y*64:y*64+64] = batch['kpcn_diffuse_in'][:,7:10,:,:][0, :, 32:96, 32:96]
+                spec_rad[:, x*64:x*64+64, y*64:y*64+64] = batch['kpcn_specular_in'][:,:3,:,:][0, :3, 32:96, 32:96]
+                spec_rad_var[:, x*64:x*64+64, y*64:y*64+64] = batch['kpcn_specular_in'][:,3,:,:][0, 32:96, 32:96]
+                spec_rad_dx[:, x*64:x*64+64, y*64:y*64+64] = batch['kpcn_specular_in'][:,4:7,:,:][0, :, 32:96, 32:96]
+                spec_rad_dy[:, x*64:x*64+64, y*64:y*64+64] = batch['kpcn_specular_in'][:,7:10,:,:][0, :, 32:96, 32:96]
+                normal[:, x*64:x*64+64, y*64:y*64+64] = batch['kpcn_diffuse_in'][:,10:13,:,:][0, :, 32:96, 32:96]
+                normal_var[:, x*64:x*64+64, y*64:y*64+64] = batch['kpcn_diffuse_in'][:,13,:,:][0, 32:96, 32:96]
+                normal_dx[:, x*64:x*64+64, y*64:y*64+64] = batch['kpcn_diffuse_in'][:,14:17,:,:][0, :, 32:96, 32:96]
+                normal_dy[:, x*64:x*64+64, y*64:y*64+64] = batch['kpcn_diffuse_in'][:,17:20,:,:][0, :, 32:96, 32:96]
+                depth[:, x*64:x*64+64, y*64:y*64+64] = batch['kpcn_diffuse_in'][:,20,:,:][0, 32:96, 32:96]
+                depth_var[:, x*64:x*64+64, y*64:y*64+64] = batch['kpcn_diffuse_in'][:,21,:,:][0, 32:96, 32:96]
+                depth_dx[:, x*64:x*64+64, y*64:y*64+64] = batch['kpcn_diffuse_in'][:,22,:,:][0, 32:96, 32:96]
+                depth_dy[:, x*64:x*64+64, y*64:y*64+64] = batch['kpcn_diffuse_in'][:,23,:,:][0, 32:96, 32:96]
+                albedo_in[:, x*64:x*64+64, y*64:y*64+64] = batch['kpcn_diffuse_in'][:,24:27,:,:][0, :, 32:96, 32:96]
+                albedo_in_var[:, x*64:x*64+64, y*64:y*64+64] = batch['kpcn_diffuse_in'][:,27,:,:][0, 32:96, 32:96]
+                albedo_in_dx[:, x*64:x*64+64, y*64:y*64+64] = batch['kpcn_diffuse_in'][:,28:31,:,:][0, :, 32:96, 32:96]
+                albedo_in_dy[:, x*64:x*64+64, y*64:y*64+64] = batch['kpcn_diffuse_in'][:,31:34,:,:][0, :, 32:96, 32:96]
 
             
             y += 1
@@ -222,41 +254,51 @@ def denoise(diffuseNet, specularNet, dataloader, device, mode, save_dir, do_vis_
     return lossDiff/len(dataloader), lossSpec/len(dataloader), lossFinal/len(dataloader), relL2Final/len(dataloader)
 
 def test_model(diffuseNet, specularNet, device, data_dir, mode, args):
-  pass
+#   pass
+#   models = dict()
   diffuseNet.to(device)
   specularNet.to(device)
+  models = {'diffuse': diffuseNet, 'specular': specularNet}
+  print(type(models))
   dataset = DenoiseDataset(data_dir, 8, 'kpcn', 'test', 1, 'recon',
-        use_g_buf=True, use_sbmc_buf=False, use_llpm_buf=False, pnet_out_size=3)
+        use_g_buf=True, use_sbmc_buf=False, use_llpm_buf=args.use_llpm_buf, pnet_out_size=3)
+  if args.use_llpm_buf:
+        diffPathNet = PathNet(dataset.pnet_in_size).to(device)
+        specPathNet = PathNet(dataset.pnet_in_size).to(device)
+        models['path_diffuse'] = diffPathNet
+        models['path_specular'] = specPathNet
   dataloader = DataLoader(
         dataset,
         batch_size=1,
         num_workers=1,
         pin_memory=False
     )
-  _, _, totalL1, totalrelL2 = denoise(diffuseNet, specularNet, dataloader, device, mode, args.save_dir, args.do_vis_feat)
+#   models = {'dif'}
+  _, _, totalL1, totalrelL2 = denoise(models, dataloader, device, mode, args.save_dir, args.do_vis_feat, args.use_llpm_buf)
   print('TEST L1 LOSS is {}'.format(totalL1))
   print('TEST L2 LOSS is {}'.format(totalrelL2))
 
 
 def main():
-  args = parser.parse_args()
-  print(args)
+    args = parser.parse_args()
+    print(args)
 
-  if not os.path.exists(args.save_dir):
-    os.makedirs(args.save_dir)
+    if not os.path.exists(args.save_dir):
+        os.makedirs(args.save_dir)
 
-    # diffuseNet = make_net(args.num_layers, args.input_channels, args.hidden_channels, args.kernel_size, args.mode)
-    # specularNet = make_net(args.num_layers, args.input_channels, args.hidden_channels, args.kernel_size, args.mode)
+        # diffuseNet = make_net(args.num_layers, args.input_channels, args.hidden_channels, args.kernel_size, args.mode)
+        # specularNet = make_net(args.num_layers, args.input_channels, args.hidden_channels, args.kernel_size, args.mode)
     diffuseNet = KPCN(args.num_layers, args.input_channels, args.hidden_channels, args.kernel_size)
     specularNet = KPCN(args.num_layers, args.input_channels, args.hidden_channels, args.kernel_size)
 
-  # print(diffuseNet, "CUDA:", next(diffuseNet.parameters()).is_cuda)
-  # print(torch.load(args.diffuse_model).keys)
-  checkpointDiff = torch.load(args.diffuse_model)
-  checkpointSpec = torch.load(args.specular_model)
-  diffuseNet.load_state_dict(checkpointDiff['model_state_dict'])
-  specularNet.load_state_dict(checkpointSpec['model_state_dict'])
-  test_model(diffuseNet, specularNet, args.device, args.data_dir, args.mode, args)
+
+    # print(diffuseNet, "CUDA:", next(diffuseNet.parameters()).is_cuda)
+    # print(torch.load(args.diffuse_model).keys)
+    checkpointDiff = torch.load(args.diffuse_model)
+    checkpointSpec = torch.load(args.specular_model)
+    diffuseNet.load_state_dict(checkpointDiff['model_state_dict'])
+    specularNet.load_state_dict(checkpointSpec['model_state_dict'])
+    test_model(diffuseNet, specularNet, args.device, args.data_dir, args.mode, args)
 
 
 
