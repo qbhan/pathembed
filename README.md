@@ -1,1 +1,1 @@
-# adaptive_mcdenoise
+# PATH-MANIFOLD-LEARNING for MC Denoising
