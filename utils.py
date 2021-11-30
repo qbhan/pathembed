@@ -7,6 +7,11 @@ import matplotlib.pyplot as plt
 import numpy as np
 import os
 
+def apply_mask(input, mask):
+    i1 = input[:, :3, :, :] * mask
+    i1_var = i1.var(1).unsqueeze(1)
+    return
+
 def apply_kernel(weights, data):
     # print('WEIGHTS: {}, DATA : {}'.format(weights.shape, data.shape))
     # apply softmax to kernel weights
@@ -63,49 +68,37 @@ def to_torch_tensors(data):
     
   return data
 
-# def apply_kernel(weights, data):
-#     # print('WEIGHTS: {}, DATA : {}'.format(weights.shape, data.shape))
-#     # apply softmax to kernel weights
-#     # print(weights.shape)
-#     recon_kernel_size = int(weights.shape[1]**0.5)
-#     # print()
-#     weights = weights.permute((0, 2, 3, 1))
-#     # print(weights.shape, data.shape)
-#     _, _, h, w = data.size()
-#     weights = F.softmax(weights, dim=3).view(-1, w * h, recon_kernel_size, recon_kernel_size)
-#     # print(weights.shape, data.shape)
-#     # now we have to apply kernels to every pixel
-#     # first pad the input
-#     r = recon_kernel_size // 2
-#     data = F.pad(data[:,:3,:,:], (r,) * 4, "reflect")
-#     # print(data.shape)
-#     #print(data[0,:,:,:])
-    
-#     # make slices
-#     R = []
-#     G = []
-#     B = []
-#     kernels = []
-#     for i in range(h):
-#       for j in range(w):
-#         pos = i*h+j
-#         # ws = weights[:,pos:pos+1,:,:]
-#         # kernels += [ws, ws, ws]
-#         sy, ey = i+r-r, i+r+r+1
-#         sx, ex = j+r-r, j+r+r+1
-#         R.append(data[:,0:1,sy:ey,sx:ex])
-#         G.append(data[:,1:2,sy:ey,sx:ex])
-#         B.append(data[:,2:3,sy:ey,sx:ex])
-#         #slices.append(data[:,:,sy:ey,sx:ex])
-        
-#     reds = (torch.cat(R, dim=1)*weights).sum(2).sum(2)
-#     greens = (torch.cat(G, dim=1)*weights).sum(2).sum(2)
-#     blues = (torch.cat(B, dim=1)*weights).sum(2).sum(2)
-    
-#     res = torch.cat((reds, greens, blues), dim=1).view(-1, 3, h, w)
-#     # print(res.shape)
-    
-#     return res
+# class Scatter2Gather(th.autograd.Function):
+#     """Converts (transposes) scatter kernels into gather kernels.
+#     Kernel weights at (x, y) for offset (dx, dy) (i.e. scatter[., dy, dx, y,
+#     x]) are put at gather[., -dy, -dx, y+dy, x+dx].
+#     Args:
+#       data(th.Tensor)[bs, k_h, k_w, h, w]: scatter kernel weights.
+#     Returns:
+#       (th.Tensor)[bs, k_h, k_w, h, w]: gather kernel weights.
+#     """
+#     @staticmethod
+#     def forward(ctx, data):
+#         output = data.new()
+#         output.resize_as_(data)
+#         assert len(data.shape) == 5, "data should be 5d"
+#         if _is_cuda(data):
+#             ops.scatter2gather_cuda_float32(data, output)
+#         else:
+#             ops.scatter2gather_cpu_float32(data, output)
+#         return output
+
+#     @staticmethod
+#     def backward(ctx, d_output):
+#         d_data = d_output.new()
+#         d_data.resize_as_(d_output)
+#         _, kh, kw, _, _ = d_data.shape
+#         if _is_cuda(d_output):
+#             ops.scatter2gather_cuda_float32(d_output, d_data)
+#         else:
+#             ops.scatter2gather_cpu_float32(d_output, d_data)
+#         return d_data
+      
 
 
 def send_to_device(data, device):

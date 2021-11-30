@@ -1,6 +1,6 @@
-python train_decomp.py \
+python train_decomp_simple.py \
   --mode 'decomp_kpcn' \
-  --device 'cuda:0' \
+  --device 'cuda:1' \
   --input_channels 34 \
   --hidden_channels 100 \
   --num_layer 9 \
@@ -9,6 +9,4 @@ python train_decomp.py \
   --lr 1e-4 \
   --epochs 40 \
   --loss 'L1' \
-  --data_dir '/mnt/ssd2/kbhan/KPCN' \
-  --use_llpm_buf True 
-  # --do_discrete
+  --data_dir '/mnt/ssd2/kbhan/KPCN'

@@ -44,11 +44,11 @@ class spatialFeatExtractor(nn.Module):
         layers = []
         for i in range(num_layer):
             if i == 0:
-                layers.append(resBlock(in_ch, hid_ch))
+                layers.append(ResBlock(in_ch, hid_ch))
             # if i == num_layer - 1:
             #     layers.append(resBlock(hid_ch, out_ch))
             else:
-                layers.append(resBlock(hid_ch, hid_ch))
+                layers.append(ResBlock(hid_ch, hid_ch))
 
         self.model = nn.Sequential(*layers)
 

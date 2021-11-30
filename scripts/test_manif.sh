@@ -1,10 +1,11 @@
 python test.py \
   --mode kpcn \
+  --device 'cuda:0' \
   --use_llpm_buf True \
   --input_channels 39 \
-  --diffuse_model trained_model/kpcn_manif_2/diff_e6.pt \
-  --specular_model trained_model/kpcn_manif_2/spec_e6.pt \
-  --path_diffuse_model trained_model/kpcn_manif_2/path_diff_e6.pt \
-  --path_diffuse_model trained_model/kpcn_manif_2/path_spec_e6.pt \
-  --data_dir '/root/kpcn_data/kpcn_data/data' \
-  --save_dir 'test/kpcn_manif_2'
+  --diffuse_model trained_model/kpcn_manif_w1/diff_e8.pt \
+  --specular_model trained_model/kpcn_manif_w1/spec_e8.pt \
+  --path_diffuse_model trained_model/kpcn_manif_w1/path_diff_e8.pt \
+  --path_diffuse_model trained_model/kpcn_manif_w1/path_spec_e8.pt \
+  --data_dir '/mnt/ssd2/kbhan/KPCN' \
+  --save_dir 'test/kpcn_manif_w1'

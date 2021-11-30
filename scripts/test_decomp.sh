@@ -1,0 +1,14 @@
+python test_decomp.py \
+  --mode kpcn \
+  --device 'cuda:0' \
+  --use_llpm_buf True \
+  --input_channels 39 \
+  --decomp trained_model/kpcn_decomp_mask_2/decomp_e13.pt \
+  --diffuse1 trained_model/kpcn_decomp_mask_2/diff1_e13.pt \
+  --specular1 trained_model/kpcn_decomp_mask_2/spec1_e13.pt \
+  --diffuse2 trained_model/kpcn_decomp_mask_2/diff2_e13.pt \
+  --specular2 trained_model/kpcn_decomp_mask_2/spec2_e13.pt \
+  --diffusePath trained_model/kpcn_decomp_mask_2/path_diff_e13.pt \
+  --specularPath trained_model/kpcn_decomp_mask_2/path_spec_e13.pt \
+  --data_dir '/mnt/ssd2/kbhan/KPCN' \
+  --save_dir 'test/kpcn_decomp_mask_2/'

@@ -22,13 +22,13 @@ class KPCN(nn.Module):
         
         layers = [
             nn.Conv2d(input_channels, hidden_channels, kernel_size),
-            nn.ReLU()
+            nn.ReLU(inplace=True)
         ]
 
         for l in range(n_layers-2):
             layers += [
             nn.Conv2d(hidden_channels, hidden_channels, kernel_size),
-            nn.ReLU()
+            nn.ReLU(inplace=True)
             ] 
 
         layers += [nn.Conv2d(hidden_channels, recon_kernel_size**2, kernel_size)]
@@ -39,10 +39,14 @@ class KPCN(nn.Module):
 
         self.layers = nn.Sequential(*layers)
 
-    def forward(self, x):
+    def forward(self, x, inp=None):
         kernel = self.layers(x)
-        x = crop_like(x, kernel)
-        return apply_kernel(kernel, x)
+        if inp is None:
+            x = crop_like(x, kernel)
+            return apply_kernel(kernel, x)
+        else:
+            inp = crop_like(inp, kernel)
+            return apply_kernel(kernel, inp)
 
 # def make_net(n_layers, input_channels, hidden_channels, kernel_size, mode):
 #   # create first layer manually

@@ -1,6 +1,9 @@
 python test.py \
   --mode kpcn \
-  --diffuse_model trained_model/kpcn_d/4/diff_e6.pt \
-  --specular_model trained_model/kpcn_d/4/spec_e6.pt \
-  --data_dir '/root/kpcn_data/kpcn_data/data' \
-  --save_dir 'test/kpcn_d.4'
+  --num_layers 9 \
+  --kernel_size 5 \
+  --device 'cuda:1' \
+  --diffuse_model trained_model/kpcn/diff_e12.pt \
+  --specular_model trained_model/kpcn/spec_e12.pt \
+  --data_dir '/mnt/ssd2/kbhan/KPCN' \
+  --save_dir 'test/kpcn'

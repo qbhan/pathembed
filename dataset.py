@@ -193,7 +193,7 @@ class DenoiseDataset(Dataset):
         'y_offset': 128,
     """
 
-    def __init__(self, gt_base_dir, spp, base_model='kpcn', mode='train', batch_size=8, sampling='random', use_g_buf=True, use_sbmc_buf=False, use_llpm_buf=False, pnet_out_size=3):
+    def __init__(self, gt_base_dir, spp, base_model='kpcn', mode='train', batch_size=8, sampling='random', use_g_buf=True, use_sbmc_buf=False, use_llpm_buf=False, pnet_out_size=3, scale=1):
         if base_model not in [self.SBMC, self.KPCN, self.AMCD, self.LBMC]:
             raise RuntimeError("Unknown baseline model %s" % base_model)
         
@@ -255,6 +255,8 @@ class DenoiseDataset(Dataset):
 
         if use_llpm_buf:
             self.dncnn_in_size += pnet_out_size + 2 # path weight, p-buffer, variance
+            
+        self.scale = scale
 
         # TODO(cho): OptaGen에서 데이터 생성할 때부터 metadata로 아래 정보를 넣자.
         # Raw feature ranges
@@ -322,11 +324,11 @@ class DenoiseDataset(Dataset):
         self.samples = None
     
     def __len__(self):
-        if self.mode == 'train':
-            return len(self.gt_files) * self.patches_per_image // 2
-        else:
-            return len(self.gt_files) * self.patches_per_image
-        # return len(self.gt_files) * 8
+        # if self.mode == 'train':
+        #     return len(self.gt_files) * self.patches_per_image // 2
+        # else:
+        #     return len(self.gt_files) * self.patches_per_image
+        return int(len(self.gt_files) * self.patches_per_image * self.scale)
 
 # Preprocessing
     def _gradients(self, buf):
@@ -1195,7 +1197,7 @@ class DenoiseDataset(Dataset):
                 llpm_fn = llpm_fn.replace(os.sep + 'KPCN' + os.sep, os.sep + 'LLPM' + os.sep)
                 # print(in_fn, llpm_fn)
                 file = '/'.join(llpm_fn.split('/')[-3:])
-                llpm_fn = '/root/LLPM/' + file
+                llpm_fn = '/mnt/ssd3/kbhan/LLPM/' + file
                 # llpm_fn.replace(os.sep + 'KPCN' + os.sep, os.sep + 'LLPM' + os.sep)
                 llpm_fn = get_valid_path(llpm_fn)
 
@@ -1579,13 +1581,13 @@ class FullImageDataset(Dataset):
         return out, i_start, j_start, i_end, j_end, i, j
 
 
-def init_data(args):
+def init_data(args, scale=1):
     # Initialize datasets
     datasets = {}
     # datasets['train'] = MSDenoiseDataset(args.data_dir, 8, 'kpcn', 'train', args.batch_size, 'random',
     #     use_g_buf=True, use_sbmc_buf=False, use_llpm_buf=False, pnet_out_size=3)
     datasets['train'] = DenoiseDataset(args.data_dir, 8, 'kpcn', 'train', args.batch_size, 'random',
-      use_g_buf=True, use_sbmc_buf=False, use_llpm_buf=args.use_llpm_buf, pnet_out_size=3)
+      use_g_buf=True, use_sbmc_buf=False, use_llpm_buf=args.use_llpm_buf, pnet_out_size=3, scale=scale)
     # print('DATASET sample length ', len(datasets['train'].samples))
     # datasets['val'] = MSDenoiseDataset(args.data_dir, 8, 'kpcn', 'val', 4, 'grid',
     #     use_g_buf=True, use_sbmc_buf=False, use_llpm_buf=False, pnet_out_size=3)

@@ -5,20 +5,31 @@ import torch.nn.functional as F
 from utils import *
 
 
-class resBlock(nn.Module):
+class ResBlock(nn.Module):
     def __init__(self, in_ch, hid_ch):
-        super(resBlock, self).__init__()
+        super(ResBlock, self).__init__()
         self.act = nn.ReLU()
         self.conv1 = nn.Conv2d(in_ch, hid_ch, kernel_size=3, padding=1)
         self.conv2 = nn.Conv2d(hid_ch, hid_ch, kernel_size=3, padding=1)
 
     def forward(self, x):
-        return x + self.conv2(self.act(self.conv1(self.act(x))))
+        return x + self.act(self.conv2(self.act(self.conv1(x))))
 
 
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
+class SingleConv(nn.Module):
+    """(convolution => [BN] => ReLU) * 2"""
+    def __init__(self, in_channels, out_channels, mid_channels=None):
+        super().__init__()
+        if not mid_channels:
+            mid_channels = out_channels
+        self.conv = nn.Sequential(
+            nn.Conv2d(in_channels, mid_channels, kernel_size=3, padding=1),
+            nn.BatchNorm2d(mid_channels),
+            nn.ReLU(inplace=True),
+        )
+
+    def forward(self, x):
+        return self.conv(x)
 
 
 class DoubleConv(nn.Module):
@@ -48,6 +59,7 @@ class Down(nn.Module):
         super().__init__()
         self.maxpool_conv = nn.Sequential(
             nn.MaxPool2d(2),
+            # nn.Conv2d(in_channels=in_channels, out_channels=out_channels, kernel_size=2, stride=2),
             DoubleConv(in_channels, out_channels)
         )
 
@@ -63,13 +75,14 @@ class Up(nn.Module):
 
         # if bilinear, use the normal convolutions to reduce the number of channels
         if bilinear:
-            self.up = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=True)
+            self.up = nn.Upsample(scale_factor=2, mode='nearest')
             self.conv = DoubleConv(in_channels, out_channels, in_channels // 2)
         else:
             self.up = nn.ConvTranspose2d(in_channels, in_channels // 2, kernel_size=2, stride=2)
             self.conv = DoubleConv(in_channels, out_channels)
 
     def forward(self, x1, x2):
+        # print('up', x1.shape)
         x1 = self.up(x1)
         # input is CHW
         diffY = x2.size()[2] - x1.size()[2]
@@ -94,33 +107,140 @@ class OutConv(nn.Module):
 
 
 class UNet(nn.Module):
-    def __init__(self, n_channels, n_classes, bilinear=True):
+    def __init__(self, n_channels, n_classes, hidden=64, bilinear=True):
         super(UNet, self).__init__()
         self.n_channels = n_channels
         self.n_classes = n_classes
         self.bilinear = bilinear
 
-        self.inc = DoubleConv(n_channels, 64)
-        self.down1 = Down(64, 128)
-        self.down2 = Down(128, 256)
-        self.down3 = Down(256, 512)
         factor = 2 if bilinear else 1
-        # self.down4 = Down(512, 1024 // factor)
-        # self.up1 = Up(1024, 512 // factor, bilinear)
-        self.up2 = Up(768, 256 // factor, bilinear)
-        self.up3 = Up(256, 128 // factor, bilinear)
-        self.up4 = Up(128, 64, bilinear)
-        self.outc = OutConv(64, n_classes)
+
+        self.inc = DoubleConv(n_channels, hidden)
+        self.down1 = Down(hidden, hidden)
+        self.down2 = Down(hidden, hidden*2)
+        self.down3 = Down(hidden*2, hidden*4)
+        self.down4 = Down(hidden*4, hidden*8 // factor)
+
+        self.up1 = Up(hidden*8, hidden*4 // factor, bilinear)
+        self.up2 = Up(hidden*4, hidden*2 // factor, bilinear)
+        # self.up2 = Up(512, 256 // factor, bilinear)
+        self.up3 = Up(hidden*2, hidden, bilinear)
+        self.up4 = Up(hidden*2, hidden, bilinear)
+        self.outc = OutConv(hidden, n_classes)
 
     def forward(self, x):
         x1 = self.inc(x)
+        # print('inc x1', x1.shape)
         x2 = self.down1(x1)
+        # print('down x2', x2.shape)
         x3 = self.down2(x2)
+        # print('down x3', x3.shape)
         x4 = self.down3(x3)
+        # print('down x4', x4.shape)
+        x5 = self.down4(x4)
+        # print('down x5', x5.shape)
+        x = self.up1(x5, x4)
+        x = self.up2(x, x3)
+        # print('up x3', x.shape)
+        x = self.up3(x, x2)
+        # print('up x2', x.shape)
+        x = self.up4(x, x1)
+        # print('up x1', x.shape)
+        x = self.outc(x)
+        return x
+
+
+class UNet_Half(nn.Module):
+    def __init__(self, n_channels, n_classes, hidden=64, bilinear=True):
+        super(UNet_Half, self).__init__()
+        self.n_channels = n_channels
+        self.n_classes = n_classes
+        self.bilinear = bilinear
+
+        factor = 1 if bilinear else 1
+
+        self.inc = DoubleConv(n_channels, hidden)
+        self.down1 = Down(hidden, hidden)
+        self.down2 = Down(hidden, hidden*2)
+        self.down3 = Down(hidden*2, hidden*4)
+        # self.down4 = Down(hidden*4, hidden*8 // factor)
+
+        # self.up1 = Up(hidden*8, hidden*4 // factor, bilinear)
+        self.up2 = Up(hidden*6, hidden*2 // factor, bilinear)
+        # self.up2 = Up(512, 256 // factor, bilinear)
+        self.up3 = Up(hidden*3, hidden, bilinear)
+        self.up4 = Up(hidden*2, hidden, bilinear)
+        self.outc = OutConv(hidden, n_classes)
+
+    def forward(self, x):
+        x1 = self.inc(x)
+        # print('inc x1', x1.shape)
+        x2 = self.down1(x1)
+        # print('down x2', x2.shape)
+        x3 = self.down2(x2)
+        # print('down x3', x3.shape)
+        x4 = self.down3(x3)
+        # print('down x4', x4.shape)
         # x5 = self.down4(x4)
+        # print('down x5', x5.shape)
         # x = self.up1(x5, x4)
         x = self.up2(x4, x3)
+        # print('up x3', x.shape)
         x = self.up3(x, x2)
+        # print('up x2', x.shape)
         x = self.up4(x, x1)
-        logits = self.outc(x)
-        return logits
+        # print('up x1', x.shape)
+        # logits = self.outc(x)
+        return x
+
+
+# class UNet_quad(nn.Module):
+#     def __init__(self, n_channels, n_classes, hidden=64, bilinear=True):
+#         super(UNet_Half, self).__init__()
+#         self.n_channels = n_channels
+#         self.n_classes = n_classes
+#         self.bilinear = bilinear
+
+#         factor = 2 if bilinear else 1
+
+#         self.inc = DoubleConv(n_channels, hidden)
+#         self.down1 = Down(hidden, hidden)
+#         self.down2 = Down(hidden, hidden*2)
+#         self.down3 = Down(hidden*2, hidden*4)
+#         self.down4 = Down(hidden*4, hidden*8 // factor)
+
+#         self.up1 = Up(hidden*8, hidden*4 // factor, bilinear)
+#         self.up2 = Up(hidden*4, hidden*2 // factor, bilinear)
+#         # self.up2 = Up(512, 256 // factor, bilinear)
+#         self.up3 = Up(hidden*2, hidden, bilinear)
+#         self.up4 = Up(hidden*2, hidden, bilinear)
+#         self.outc = OutConv(hidden, n_classes)
+
+#     def forward(self, x):
+#         x1 = self.inc(x)
+#         # print('inc x1', x1.shape)
+#         x2 = self.down1(x1)
+#         # print('down x2', x2.shape)
+#         x3 = self.down2(x2)
+#         # print('down x3', x3.shape)
+#         x4 = self.down3(x3)
+#         # print('down x4', x4.shape)
+#         x5 = self.down4(x4)
+#         # print('down x5', x5.shape)
+#         x = self.up1(x5, x4)
+#         x = self.up2(x, x3)
+#         # print('up x3', x.shape)
+#         x = self.up3(x, x2)
+#         # print('up x2', x.shape)
+#         x = self.up4(x, x1)
+#         # print('up x1', x.shape)
+#         logits = self.outc(x)
+#         return logits
+
+# net = UNet(34, 3, hidden=64)
+# print('# Parameter for DecompNet : {}'.format(sum([p.numel() for p in net.parameters()])))
+# net_half = UNet_Half(34, 3, bilinear=True)
+# print('# Parameter for DecompNet : {}'.format(sum([p.numel() for p in net_half.parameters()])))
+# batch = torch.rand((8, 34, 128, 128))
+# ret = net(batch)
+# print(ret.shape)

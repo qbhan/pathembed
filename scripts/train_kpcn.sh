@@ -1,12 +1,14 @@
 python train.py \
+  --device 'cuda:1' \
   --mode 'kpcn' \
-  --input_channels 30 \
+  --input_channels 34 \
   --hidden_channels 100 \
-  --num_layer 9 \
+  --kernel_size 3 \
+  --num_layer 18 \
   --eps 0.00316 \
   --do_val \
-  --lr 1e-4 \
+  --lr 1e-6 \
   --epochs 40 \
   --loss 'L1' \
-  --data_dir '/root/kpcn_data/kpcn_data/data' \
-    # --use_llpm_buf False\
+  --data_dir '/mnt/ssd2/kbhan/KPCN' \
+  --do_finetune

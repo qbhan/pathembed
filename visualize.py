@@ -8,6 +8,8 @@ import argparse
 import os
 from tqdm import tqdm
 import csv
+from PIL import Image  
+import numpy as np
 
 from utils import *
 from kpcn import *
@@ -134,3 +136,31 @@ def save_features():
         albedo_in_var[:, x*64:x*64+64, y*64:y*64+64] = data['kpcn_diffuse_in'][:,27,:,:][0, 32:96, 32:96]
         albedo_in_dx[:, x*64:x*64+64, y*64:y*64+64] = data['kpcn_diffuse_in'][:,28:31,:,:][0, :, 32:96, 32:96]
         albedo_in_dy[:, x*64:x*64+64, y*64:y*64+64] = data['kpcn_diffuse_in'][:,31:34,:,:][0, :, 32:96, 32:96]
+        
+def error_error_map(img1, img2):
+    img1 = np.asarray(Image.open(img1))
+    img2 = np.asarray(Image.open(img2))
+    error = np.abs(img1-img2)
+    print(np.max(error), np.min(error))
+    error = Image.fromarray(error.astype('uint8'), 'RGB')
+    return error
+
+
+def error_map(test1_dir, test2_dir, dir='error_map/'):
+    for i in range(24):
+        test1_error_dir = test1_dir + '/test{}/denoise.png'.format(i)
+        test2_error_dir = test2_dir + '/test{}/denoise.png'.format(i)
+        error = error_error_map(test1_error_dir, test2_error_dir)
+        error.save(dir+'error_{}.png'.format(i))
+        
+def supervision_flip(test1_dir):
+    for i in range(24):
+        supervision_dir = test1_dir + '/test{}/mask_supervision.png'.format(i)
+        img = np.asarray(Image.open(supervision_dir))
+        img = np.ones_like(img) * 255 - img
+        print(np.max(img))
+        img = Image.fromarray(img.astype('uint8'), 'RGB')
+        img.save(test1_dir + '/test{}/mask_supervision.png'.format(i))
+        
+# error_map('test/kpcn', 'test/kpcn_decomp_mask_2')
+supervision_flip('test/kpcn')
