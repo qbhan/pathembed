@@ -17,21 +17,22 @@ class KPCN(nn.Module):
                 input_channels, 
                 hidden_channels, 
                 kernel_size, 
+                padding = 0,
                 recon_kernel_size=21):
         super(KPCN, self).__init__()
         
         layers = [
-            nn.Conv2d(input_channels, hidden_channels, kernel_size),
+            nn.Conv2d(input_channels, hidden_channels, kernel_size, padding=padding),
             nn.ReLU(inplace=True)
         ]
 
         for l in range(n_layers-2):
             layers += [
-            nn.Conv2d(hidden_channels, hidden_channels, kernel_size),
+            nn.Conv2d(hidden_channels, hidden_channels, kernel_size, padding=padding),
             nn.ReLU(inplace=True)
             ] 
 
-        layers += [nn.Conv2d(hidden_channels, recon_kernel_size**2, kernel_size)]
+        layers += [nn.Conv2d(hidden_channels, recon_kernel_size**2, kernel_size, padding=padding)]
 
         for layer in layers:
             if isinstance(layer, nn.Conv2d):
