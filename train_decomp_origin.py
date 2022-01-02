@@ -313,11 +313,11 @@ def train(mode,
         print("initLossFinal: {}".format(initLossFinal))
         print("relL2LossFinal: {}".format(relL2LossFinal))
         print("pathLoss: {}".format(pathLoss))
-        writer.add_scalar('Valid total relL2 loss', relL2LossFinal if relL2LossFinal != float('inf') else 0, (init_epoch + 1) * len(validDataloader))
-        writer.add_scalar('Valid total loss', initLossFinal if initLossFinal != float('inf') else 0, (init_epoch + 1) * len(validDataloader))
-        writer.add_scalar('Valid Gbuffer Loss', initLossGbuffer if initLossGbuffer != float('inf') else 0, (init_epoch + 1) * len(validDataloader))
-        writer.add_scalar('Valid Pbuffer Loss', initLossPbuffer if initLossPbuffer != float('inf') else 0, (init_epoch + 1) * len(validDataloader))
-        writer.add_scalar('Valid Path Loss', pathLoss if pathLoss != float('inf') else 0, (init_epoch + 1) * len(validDataloader))
+        writer.add_scalar('Valid total relL2 loss', relL2LossFinal if relL2LossFinal != float('inf') else 0, (init_epoch + 1))
+        writer.add_scalar('Valid total loss', initLossFinal if initLossFinal != float('inf') else 0, (init_epoch + 1))
+        writer.add_scalar('Valid Gbuffer Loss', initLossGbuffer if initLossGbuffer != float('inf') else 0, (init_epoch + 1))
+        writer.add_scalar('Valid Pbuffer Loss', initLossPbuffer if initLossPbuffer != float('inf') else 0, (init_epoch + 1))
+        writer.add_scalar('Valid Path Loss', pathLoss if pathLoss != float('inf') else 0, (init_epoch + 1))
 
 
     import time
@@ -471,11 +471,11 @@ def train(mode,
                 'path': pathNet
                 }
         validLossGbuffer, validLossPbuffer, validLossFinal, relL2LossFinal, pathLoss = validation(models, validDataloader, eps, criterion, device, epoch, use_llpm_buf,mode)
-        writer.add_scalar('Valid total relL2 loss', relL2LossFinal if relL2LossFinal != float('inf') else 1e+35, (epoch + 1) * len(dataloader))
-        writer.add_scalar('Valid total loss', validLossFinal if accuLossFinal != float('inf') else 1e+35, (epoch + 1) * len(dataloader))
-        writer.add_scalar('Valid gbuffer loss', validLossGbuffer if validLossGbuffer != float('inf') else 0, (epoch + 1) * len(validDataloader))
-        writer.add_scalar('Valid pbuffer loss', validLossPbuffer if validLossPbuffer != float('inf') else 0, (epoch + 1) * len(validDataloader))
-        writer.add_scalar('Valid path loss', pathLoss if pathLoss != float('inf') else 0, (epoch + 1) * len(dataloader))
+        writer.add_scalar('Valid total relL2 loss', relL2LossFinal if relL2LossFinal != float('inf') else 1e+35, (epoch + 1))
+        writer.add_scalar('Valid total loss', validLossFinal if accuLossFinal != float('inf') else 1e+35, (epoch + 1))
+        writer.add_scalar('Valid gbuffer loss', validLossGbuffer if validLossGbuffer != float('inf') else 0, (epoch + 1))
+        writer.add_scalar('Valid pbuffer loss', validLossPbuffer if validLossPbuffer != float('inf') else 0, (epoch + 1))
+        writer.add_scalar('Valid path loss', pathLoss if pathLoss != float('inf') else 0, (epoch + 1))
 
 
         print("Epoch {}".format(epoch + 1))

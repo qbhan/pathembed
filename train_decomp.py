@@ -364,14 +364,14 @@ def train(mode,
         print("relL2LossFinal: {}".format(relL2LossFinal))
         print("pathDiffLoss: {}".format(pathDiffLoss))
         print("pathSpecLoss: {}".format(pathSpecLoss))
-        writer.add_scalar('Valid total relL2 loss', relL2LossFinal if relL2LossFinal != float('inf') else 0, (init_epoch + 1) * len(validDataloader))
-        writer.add_scalar('Valid total loss', initLossFinal if initLossFinal != float('inf') else 0, (init_epoch + 1) * len(validDataloader))
-        writer.add_scalar('Valid diffuse loss 1', initLossDiff1 if initLossDiff1 != float('inf') else 0, (init_epoch + 1) * len(validDataloader))
-        writer.add_scalar('Valid specular loss 1', initLossSpec1 if initLossSpec1 != float('inf') else 0, (init_epoch + 1) * len(validDataloader))
-        writer.add_scalar('Valid diffuse loss 2', initLossDiff2 if initLossDiff2 != float('inf') else 0, (init_epoch + 1) * len(validDataloader))
-        writer.add_scalar('Valid specular loss 2', initLossSpec2 if initLossSpec2 != float('inf') else 0, (init_epoch + 1) * len(validDataloader))
-        writer.add_scalar('Valid path diffuse loss', pathDiffLoss if pathDiffLoss != float('inf') else 0, (init_epoch + 1) * len(validDataloader))
-        writer.add_scalar('Valid path specular loss', pathSpecLoss if pathSpecLoss != float('inf') else 0, (init_epoch + 1) * len(validDataloader))
+        writer.add_scalar('Valid total relL2 loss', relL2LossFinal if relL2LossFinal != float('inf') else 0, (init_epoch + 1))
+        writer.add_scalar('Valid total loss', initLossFinal if initLossFinal != float('inf') else 0, (init_epoch + 1))
+        writer.add_scalar('Valid diffuse loss 1', initLossDiff1 if initLossDiff1 != float('inf') else 0, (init_epoch + 1))
+        writer.add_scalar('Valid specular loss 1', initLossSpec1 if initLossSpec1 != float('inf') else 0, (init_epoch + 1))
+        writer.add_scalar('Valid diffuse loss 2', initLossDiff2 if initLossDiff2 != float('inf') else 0, (init_epoch + 1))
+        writer.add_scalar('Valid specular loss 2', initLossSpec2 if initLossSpec2 != float('inf') else 0, (init_epoch + 1))
+        writer.add_scalar('Valid path diffuse loss', pathDiffLoss if pathDiffLoss != float('inf') else 0, (init_epoch + 1))
+        writer.add_scalar('Valid path specular loss', pathSpecLoss if pathSpecLoss != float('inf') else 0, (init_epoch + 1))
 
 
     import time
@@ -587,14 +587,14 @@ def train(mode,
             'path_specular': specPathNet
             }
         validLossDiff1, validLossSpec1, validLossDiff2, validLossSpec2, validLossFinal, relL2LossFinal, pathDiffLoss, pathSpecLoss = validation(models, validDataloader, eps, criterion, device, epoch, use_llpm_buf,mode)
-        writer.add_scalar('Valid total relL2 loss', relL2LossFinal if relL2LossFinal != float('inf') else 1e+35, (epoch + 1) * len(dataloader))
-        writer.add_scalar('Valid total loss', validLossFinal if accuLossFinal != float('inf') else 1e+35, (epoch + 1) * len(dataloader))
-        writer.add_scalar('Valid diffuse loss 1', validLossDiff1 if validLossDiff1 != float('inf') else 0, (epoch + 1) * len(validDataloader))
-        writer.add_scalar('Valid specular loss 1', validLossSpec1 if validLossSpec1 != float('inf') else 0, (epoch + 1) * len(validDataloader))
-        writer.add_scalar('Valid diffuse loss 2', validLossDiff2 if validLossDiff2 != float('inf') else 0, (epoch + 1) * len(validDataloader))
-        writer.add_scalar('Valid specular loss 2', validLossSpec2 if validLossSpec2 != float('inf') else 0, (epoch + 1) * len(validDataloader))
-        writer.add_scalar('Valid path diffuse loss', pathDiffLoss if pathDiffLoss != float('inf') else 0, (epoch + 1) * len(dataloader))
-        writer.add_scalar('Valid path specular loss', pathSpecLoss if pathSpecLoss != float('inf') else 0, (epoch + 1) * len(dataloader))
+        writer.add_scalar('Valid total relL2 loss', relL2LossFinal if relL2LossFinal != float('inf') else 1e+35, (epoch + 1))
+        writer.add_scalar('Valid total loss', validLossFinal if accuLossFinal != float('inf') else 1e+35, (epoch + 1))
+        writer.add_scalar('Valid diffuse loss 1', validLossDiff1 if validLossDiff1 != float('inf') else 0, (epoch + 1))
+        writer.add_scalar('Valid specular loss 1', validLossSpec1 if validLossSpec1 != float('inf') else 0, (epoch + 1))
+        writer.add_scalar('Valid diffuse loss 2', validLossDiff2 if validLossDiff2 != float('inf') else 0, (epoch + 1))
+        writer.add_scalar('Valid specular loss 2', validLossSpec2 if validLossSpec2 != float('inf') else 0, (epoch + 1))
+        writer.add_scalar('Valid path diffuse loss', pathDiffLoss if pathDiffLoss != float('inf') else 0, (epoch + 1))
+        writer.add_scalar('Valid path specular loss', pathSpecLoss if pathSpecLoss != float('inf') else 0, (epoch + 1))
 
 
         print("Epoch {}".format(epoch + 1))

@@ -1,3 +1,10 @@
+"""
+Testing hard-coded decomposition of images
+Image will decompose with a certain threshold according to the error map
+How about that?
+"""
+
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -91,7 +98,7 @@ parser.add_argument('--lr', default=1e-4, type=float)
 parser.add_argument('--epochs', default=20, type=int)
 parser.add_argument('--loss', default='L1')
 
-save_dir = 'kpcn_decomp_simple_share'
+save_dir = 'kpcn_decomp_c1'
 writer = SummaryWriter('kpcn/'+save_dir)
 
 
@@ -111,7 +118,7 @@ def validation(models, dataloader, eps, criterion, device, epoch, use_llpm_buf, 
     batch_idx = 0
     decompNet = models['decomp']
     diffuseNet1, specularNet1, diffuseNet2, specularNet2 = models['diffuse1'].eval(), models['specular1'].eval(), models['diffuse2'].eval(), models['specular2'].eval()
-    # diffPathNet, specPathNet = models['path_diffuse'].eval(), models['path_specular'].eval()
+    diffPathNet, specPathNet = models['path_diffuse'].eval(), models['path_specular'].eval()
 
     with torch.no_grad():
         for batch in tqdm(dataloader, leave=False, ncols=70):
@@ -120,7 +127,34 @@ def validation(models, dataloader, eps, criterion, device, epoch, use_llpm_buf, 
             # print(batch['kpcn_specular_in'].shape)
             for k, v in batch.items():
                 batch[k] = v.to(device)
-            mask, batch1, batch2 = decompNet(batch, False)
+            mask, batch1, batch2 = decompNet(batch)
+            
+
+            # if use_llpm_buf:
+            paths = batch2['paths'].to(device)
+            p_buffer_diffuse, p_buffer_specular = diffPathNet(paths), specPathNet(paths)
+            '''Feature Disentanglement'''    
+            #TODO
+            _, _, c, _, _ = p_buffer_diffuse.shape
+            assert c >= 2
+            
+            # Variance
+            p_var_diffuse = p_buffer_diffuse.var(1).mean(1, keepdims=True)
+            p_var_diffuse /= p_buffer_diffuse.shape[1]
+            p_var_specular = p_buffer_specular.var(1).mean(1, keepdims=True)
+            p_var_specular /= p_buffer_specular.shape[1]
+
+            # make new batch
+            batch2 = {
+                'target_total': batch2['target_total'].to(device),
+                'target_diffuse': batch2['target_diffuse'].to(device),
+                'target_specular': batch2['target_specular'].to(device),
+                'kpcn_diffuse_in': torch.cat([batch2['kpcn_diffuse_in'].to(device), p_buffer_diffuse.mean(1), p_var_diffuse], 1),
+                'kpcn_specular_in': torch.cat([batch2['kpcn_specular_in'].to(device), p_buffer_specular.mean(1), p_var_specular], 1),
+                'kpcn_diffuse_buffer': batch2['kpcn_diffuse_buffer'].to(device),
+                'kpcn_specular_buffer': batch2['kpcn_specular_buffer'].to(device),
+                'kpcn_albedo': batch2['kpcn_albedo'].to(device),
+            }
 
             # Denosing using only G-buffers
 
@@ -152,13 +186,11 @@ def validation(models, dataloader, eps, criterion, device, epoch, use_llpm_buf, 
             X_spec2 = batch2['kpcn_specular_in'].to(device)
             Y_spec2 = batch2['target_specular'].to(device)
 
-            # outputDiff2 = diffuseNet2(X_diff2)
-            outputDiff2 = diffuseNet1(X_diff2)
+            outputDiff2 = diffuseNet2(X_diff2)
             Y_diff2 = crop_like(Y_diff2, outputDiff2)
             lossDiff2 += criterion(outputDiff2, Y_diff2).item()
 
-            # outputSpec2 = specularNet2(X_spec2)
-            outputSpec2 = specularNet1(X_spec2)
+            outputSpec2 = specularNet2(X_spec2)
             Y_spec2 = crop_like(Y_spec2, outputSpec2)
             lossSpec2 += criterion(outputSpec2, Y_spec2).item()
 
@@ -174,6 +206,16 @@ def validation(models, dataloader, eps, criterion, device, epoch, use_llpm_buf, 
             Y_final = crop_like(Y_final, outputFinal)
             lossFinal += criterion(outputFinal, Y_final).item()
             relL2Final += relL2(outputFinal, Y_final).item()
+
+            # if use_llpm_buf:
+            p_buffer_diffuse = crop_like(p_buffer_diffuse, outputDiff2)
+            loss_manif_diffuse = path_criterion(p_buffer_diffuse, Y_diff2)
+            p_buffer_specular = crop_like(p_buffer_specular, outputSpec2)
+            loss_manif_specular = path_criterion(p_buffer_specular, Y_spec2)
+            lossDiffPath += loss_manif_diffuse
+            lossSpecPath += loss_manif_specular
+                # lossDiff += 0.1 * loss_manif_diffuse
+                # lossSpec += 0.1 * loss_manif_specular
 
             # visualize
             if batch_idx == 20:
@@ -192,7 +234,7 @@ def validation(models, dataloader, eps, criterion, device, epoch, use_llpm_buf, 
 
             batch_idx += 1
 
-    return lossDiff1/(4*len(dataloader)), lossSpec1/(4*len(dataloader)), lossDiff2/(4*len(dataloader)), lossSpec2/(4*len(dataloader)), lossFinal/(4*len(dataloader)), relL2Final/(4*len(dataloader))
+    return lossDiff1/(4*len(dataloader)), lossSpec1/(4*len(dataloader)), lossDiff2/(4*len(dataloader)), lossSpec2/(4*len(dataloader)), lossFinal/(4*len(dataloader)), relL2Final/(4*len(dataloader)), lossDiffPath/(4*len(dataloader)), lossSpecPath/(4*len(dataloader))
 
 
 def train(mode, 
@@ -221,8 +263,8 @@ def train(mode,
     # instantiate networks
     print(L, input_channels, hidden_channels, kernel_size, mode)
     print(mode)
-    decompNet = decompModule(in_channel=27, discrete=do_discrete).to(device)
-    optimizerDecomp = optim.Adam(decompNet.parameters(), lr=learning_rate, betas=(0.9, 0.99))
+    # decompNet = decompModule(in_channel=26, discrete=do_discrete).to(device)
+    # optimizerDecomp = optim.Adam(decompNet.parameters(), lr=learning_rate, betas=(0.9, 0.99))
 
     diffuseNet1 = KPCN(L, 34, hidden_channels, kernel_size).to(device)
     specularNet1 = KPCN(L, 34, hidden_channels, kernel_size).to(device)
@@ -235,12 +277,27 @@ def train(mode,
     optimizerDiff2 = optim.Adam(diffuseNet2.parameters(), lr=learning_rate, betas=(0.9, 0.99))
     optimizerSpec2 = optim.Adam(specularNet2.parameters(), lr=learning_rate, betas=(0.9, 0.99))
 
+    diffPathNet = PathNet(trainset.pnet_in_size).to(device)
+    optimizerDiffPath = optim.Adam(diffPathNet.parameters(), lr=1e-4, betas=(0.9, 0.99))
+    specPathNet = PathNet(trainset.pnet_in_size).to(device)
+    optimizerSpecPath = optim.Adam(specPathNet.parameters(), lr=1e-4, betas=(0.9, 0.99))
+    path_criterion = GlobalRelativeSimilarityLoss()
+
+    # checkpointDiffPath = torch.load('trained_model/kpcn_decomp_3/path_diff_e5.pt')
+    # diffPathNet.load_state_dict(checkpointDiffPath['model_state_dict'])
+    # optimizerDiffPath.load_state_dict(checkpointDiffPath['optimizer_state_dict'])
+    diffPathNet.train()
+
+    # checkpointSpecPath = torch.load('trained_model/kpcn_decomp_3/path_spec_e5.pt')
+    # specPathNet.load_state_dict(checkpointSpecPath['model_state_dict'])
+    # optimizerSpecPath.load_state_dict(checkpointSpecPath['optimizer_state_dict'])
+    specPathNet.train()
     # else
 
-    print(decompNet, "CUDA:", next(decompNet.parameters()).device)
     print(diffuseNet1, "CUDA:", next(diffuseNet1.parameters()).device)
-    print('# Parameter for DecompNet : {}'.format(sum([p.numel() for p in decompNet.parameters()])))
+    print(diffPathNet, "CUDA:", next(diffPathNet.parameters()).device)
     print('# Parameter for KPCN : {}'.format(sum([p.numel() for p in diffuseNet1.parameters()])))
+    print('# Parameter for PathNet : {}'.format(sum([p.numel() for p in diffPathNet.parameters()])))
     # print(summary(diffuseNet, input_size=(3, 128, 128)))
 
     if loss == 'L1':
@@ -250,30 +307,29 @@ def train(mode,
     else:
         print('Loss Not Supported')
         return
+    # optimizerP = optim.Adam(specularNet.parameters(), lr=1e-4, betas=(0.9, 0.99))
 
-    # ckptDecomp = torch.load('trained_model/kpcn_decomp_simple/decomp_e1.pt')
-    # decompNet.load_state_dict(ckptDecomp['model_state_dict'])
-    # optimizerDecomp.load_state_dict(ckptDecomp['optimizer_state_dict'])
+    # checkpointDiff1 = torch.load('trained_model/kpcn_decomp_3/diff1_e5.pt')
+    # diffuseNet1.load_state_dict(checkpointDiff1['model_state_dict'])
+    # optimizerDiff1.load_state_dict(checkpointDiff1['optimizer_state_dict'])
+    diffuseNet1.train()
 
-    # ckptDiff1 = torch.load('trained_model/kpcn_decomp_simple/diff1_e1.pt')
-    # diffuseNet1.load_state_dict(ckptDiff1['model_state_dict'])
-    # optimizerDiff1.load_state_dict(ckptDiff1['optimizer_state_dict'])
-    # diffuseNet1.train()
+    # checkpointSpec1 = torch.load('trained_model/kpcn_decomp_3/spec1_e5.pt')
+    # specularNet1.load_state_dict(checkpointSpec1['model_state_dict'])
+    # optimizerSpec1.load_state_dict(checkpointSpec1['optimizer_state_dict'])
+    specularNet1.train()
 
-    # ckptSpec1 = torch.load('trained_model/kpcn_decomp_simple/spec1_e1.pt')
-    # specularNet1.load_state_dict(ckptSpec1['model_state_dict'])
-    # optimizerSpec1.load_state_dict(ckptSpec1['optimizer_state_dict'])
-    # specularNet1.train()
+    # checkpointDiff2 = torch.load('trained_model/kpcn_decomp_3/diff2_e5.pt')
+    # diffuseNet2.load_state_dict(checkpointDiff2['model_state_dict'])
+    # optimizerDiff2.load_state_dict(checkpointDiff2['optimizer_state_dict'])
+    diffuseNet2.train()
 
-    # ckptDiff2 = torch.load('trained_model/kpcn_decomp_simple/diff2_e1.pt')
-    # diffuseNet2.load_state_dict(ckptDiff2['model_state_dict'])
-    # optimizerDiff2.load_state_dict(ckptDiff2['optimizer_state_dict'])
-    # diffuseNet2.train()
+    # checkpointSpec2 = torch.load('trained_model/kpcn_decomp_3/spec2_e5.pt')
+    # specularNet2.load_state_dict(checkpointSpec2['model_state_dict'])
+    # optimizerSpec2.load_state_dict(checkpointSpec2['optimizer_state_dict'])
+    specularNet2.train()
 
-    # ckptSpec2 = torch.load('trained_model/kpcn_decomp_simple/spec2_e1.pt')
-    # specularNet2.load_state_dict(ckptSpec2['model_state_dict'])
-    # optimizerSpec2.load_state_dict(ckptSpec2['optimizer_state_dict'])
-    # specularNet2.train()
+
 
     # pNet.train()
 
@@ -293,28 +349,35 @@ def train(mode,
     # writer = SummaryWriter('runs/'+mode+'_2')
     total_epoch = 0
     init_epoch = 0
-    # init_epoch = ckptDiff1['epoch'] + 1
-
+    # init_epoch = checkpointDiff1['epoch'] + 1
+    # epoch = 0
+    
     if init_epoch == 0:
         print('Check Initialization')
-        models = {'decomp': decompNet, 
+        models = { 
                 'diffuse1': diffuseNet1, 
                 'specular1': specularNet1, 
                 'diffuse2': diffuseNet2, 
-                'specular2': specularNet2
+                'specular2': specularNet2, 
+                'path_diffuse': diffPathNet, 
+                'path_specular': specPathNet
                 }
-
-        initLossDiff1, initLossSpec1, initLossDiff2, initLossSpec2, initLossFinal, relL2LossFinal = validation(models, validDataloader, eps, criterion, device, -1, use_llpm_buf,mode)
+        initLossDiff1, initLossSpec1, initLossDiff2, initLossSpec2, initLossFinal, relL2LossFinal, pathDiffLoss, pathSpecLoss = validation(models, validDataloader, eps, criterion, device, -1, use_llpm_buf,mode)
         print("initLossDiff1: {}".format(initLossDiff1))
         print("initLossSpec1: {}".format(initLossSpec1))
         print("initLossFinal: {}".format(initLossFinal))
         print("relL2LossFinal: {}".format(relL2LossFinal))
-        writer.add_scalar('Valid total relL2 loss', relL2LossFinal if relL2LossFinal != float('inf') else 0, (init_epoch + 1) * len(validDataloader))
-        writer.add_scalar('Valid total loss', initLossFinal if initLossFinal != float('inf') else 0, (init_epoch + 1) * len(validDataloader))
-        writer.add_scalar('Valid diffuse loss 1', initLossDiff1 if initLossDiff1 != float('inf') else 0, (init_epoch + 1) * len(validDataloader))
-        writer.add_scalar('Valid specular loss 1', initLossSpec1 if initLossSpec1 != float('inf') else 0, (init_epoch + 1) * len(validDataloader))
-        writer.add_scalar('Valid diffuse loss 2', initLossDiff2 if initLossDiff2 != float('inf') else 0, (init_epoch + 1) * len(validDataloader))
-        writer.add_scalar('Valid specular loss 2', initLossSpec2 if initLossSpec2 != float('inf') else 0, (init_epoch + 1) * len(validDataloader))
+        print("pathDiffLoss: {}".format(pathDiffLoss))
+        print("pathSpecLoss: {}".format(pathSpecLoss))
+        writer.add_scalar('Valid total relL2 loss', relL2LossFinal if relL2LossFinal != float('inf') else 0, (init_epoch + 1))
+        writer.add_scalar('Valid total loss', initLossFinal if initLossFinal != float('inf') else 0, (init_epoch + 1))
+        writer.add_scalar('Valid diffuse loss 1', initLossDiff1 if initLossDiff1 != float('inf') else 0, (init_epoch + 1))
+        writer.add_scalar('Valid specular loss 1', initLossSpec1 if initLossSpec1 != float('inf') else 0, (init_epoch + 1))
+        writer.add_scalar('Valid diffuse loss 2', initLossDiff2 if initLossDiff2 != float('inf') else 0, (init_epoch + 1))
+        writer.add_scalar('Valid specular loss 2', initLossSpec2 if initLossSpec2 != float('inf') else 0, (init_epoch + 1))
+        writer.add_scalar('Valid path diffuse loss', pathDiffLoss if pathDiffLoss != float('inf') else 0, (init_epoch + 1))
+        writer.add_scalar('Valid path specular loss', pathSpecLoss if pathSpecLoss != float('inf') else 0, (init_epoch + 1))
+
 
     import time
 
@@ -323,11 +386,13 @@ def train(mode,
 
     for epoch in range(init_epoch, epochs):
         print('EPOCH {}'.format(epoch+1))
-        decompNet.train()
+        # decompNet.train()
         diffuseNet1.train()
         specularNet1.train()
         diffuseNet2.train()
         specularNet2.train()
+        diffPathNet.train()
+        specPathNet.train()
         i_batch = -1
         for batch in tqdm(dataloader, leave=False, ncols=70):
             i_batch += 1
@@ -335,16 +400,40 @@ def train(mode,
             # print('DECOMPOSITION')
             for k, v in batch.items():
                 batch[k] = v.to(device)
-            mask, batch1, batch2 = decompNet(batch, False)
 
+            loss_manif = None
+            paths = batch2['paths'].to(device)
+            p_buffer_diffuse, p_buffer_specular = diffPathNet(paths), specPathNet(paths)
+            '''Feature Disentanglement'''    
+            #TODO
+            _, _, c, _, _ = p_buffer_diffuse.shape
+            assert c >= 2
             
+            # Variance
+            p_var_diffuse = p_buffer_diffuse.var(1).mean(1, keepdims=True)
+            p_var_diffuse /= p_buffer_diffuse.shape[1]
+            p_var_specular = p_buffer_specular.var(1).mean(1, keepdims=True)
+            p_var_specular /= p_buffer_specular.shape[1]
+
+            # make new batch
+            batch2 = {
+                'target_total': batch2['target_total'].to(device),
+                'target_diffuse': batch2['target_diffuse'].to(device),
+                'target_specular': batch2['target_specular'].to(device),
+                'kpcn_diffuse_in': torch.cat([batch2['kpcn_diffuse_in'].to(device), p_buffer_diffuse.mean(1), p_var_diffuse], 1),
+                'kpcn_specular_in': torch.cat([batch2['kpcn_specular_in'].to(device), p_buffer_specular.mean(1), p_var_specular], 1),
+                'kpcn_diffuse_buffer': batch2['kpcn_diffuse_buffer'].to(device),
+                'kpcn_specular_buffer': batch2['kpcn_specular_buffer'].to(device),
+                'kpcn_albedo': batch2['kpcn_albedo'].to(device),
+            }
 
             # zero the parameter gradients
-            optimizerDecomp.zero_grad()
             optimizerDiff1.zero_grad()
             optimizerSpec1.zero_grad()
             optimizerDiff2.zero_grad()
             optimizerSpec2.zero_grad()
+            optimizerDiffPath.zero_grad()
+            optimizerSpecPath.zero_grad()
 
             # Denosing using only G-buffers
 
@@ -375,13 +464,11 @@ def train(mode,
             X_spec2 = batch2['kpcn_specular_in'].to(device)
             Y_spec2 = batch2['target_specular'].to(device)
 
-            # outputDiff2 = diffuseNet2(X_diff2)
-            outputDiff2 = diffuseNet1(X_diff2)
+            outputDiff2 = diffuseNet2(X_diff2)
             Y_diff2 = crop_like(Y_diff2, outputDiff2)
             lossDiff2 = criterion(outputDiff2, Y_diff2)
 
-            # outputSpec2 = specularNet2(X_spec2)
-            outputSpec2 = specularNet1(X_spec2)
+            outputSpec2 = specularNet2(X_spec2)
             Y_spec2 = crop_like(Y_spec2, outputSpec2)
             lossSpec2 = criterion(outputSpec2, Y_spec2)
 
@@ -390,23 +477,27 @@ def train(mode,
             albedo = crop_like(albedo, outputDiff2)
             outputFinal2 = outputDiff2 * (albedo + eps) + torch.exp(outputSpec2) - 1.0
 
-            if not do_finetune:
+            
+            p_buffer_diffuse = crop_like(p_buffer_diffuse, outputDiff2)
+            loss_manif_diffuse = path_criterion(p_buffer_diffuse, Y_diff2)
+            p_buffer_specular = crop_like(p_buffer_specular, outputSpec2)
+            loss_manif_specular = path_criterion(p_buffer_specular, Y_spec2)
+            lossDiff2 += 0.1 * loss_manif_diffuse
+            lossSpec2 += 0.1 * loss_manif_specular
                 
-                # lossDiff1.backward()
-                # optimizerDiff1.step()
-                # lossSpec1.backward()
-                # optimizerSpec1.step()
-                # lossDiff2.backward()
-                # optimizerDiff2.step()
-                # lossSpec2.backward()
-                # optimizerSpec2.step()
-                # optimizerDecomp.step()
-                lossDiff = lossDiff1 + lossDiff2
-                lossSpec = lossSpec1 + lossSpec2
-                lossDiff.backward()
-                lossSpec.backward()
+
+            if not do_finetune:
+                lossDiff1.backward()
                 optimizerDiff1.step()
+                lossSpec1.backward()
                 optimizerSpec1.step()
+                lossDiff2.backward()
+                optimizerDiff2.step()
+                lossSpec2.backward()
+                optimizerSpec2.step()
+                optimizerDiffPath.step()
+                optimizerSpecPath.step()
+                optimizerDecomp.step()
 
                 # Loss of merged denoised result
                 with torch.no_grad():
@@ -427,6 +518,8 @@ def train(mode,
                 optimizerSpec1.step()
                 optimizerDiff2.step()
                 optimizerSpec2.step()
+                optimizerDiffPath.step()
+                optimizerSpecPath.step()
             
             accuLossDiff1 += lossDiff1.item()
             accuLossSpec1 += lossSpec1.item()
@@ -477,19 +570,34 @@ def train(mode,
                 'model_state_dict': specularNet2.state_dict(),
                 'optimizer_state_dict': optimizerSpec2.state_dict(),
                 }, 'trained_model/'+ save_dir + '/spec2_e{}.pt'.format(epoch+1))
+        torch.save({
+                'epoch': epoch,
+                'model_state_dict': diffPathNet.state_dict(),
+                'optimizer_state_dict': optimizerDiffPath.state_dict(),
+                }, 'trained_model/'+ save_dir + '/path_diff_e{}.pt'.format(epoch+1))
+        torch.save({
+                'epoch': epoch,
+                'model_state_dict': specPathNet.state_dict(),
+                'optimizer_state_dict': optimizerSpecPath.state_dict(),
+                }, 'trained_model/'+ save_dir + '/path_spec_e{}.pt'.format(epoch+1))
+        # print('VALIDATION WORKING!')
         models = {'decomp': decompNet, 
             'diffuse1': diffuseNet1, 
             'specular1': specularNet1, 
             'diffuse2': diffuseNet2, 
             'specular2': specularNet2, 
+            'path_diffuse': diffPathNet, 
+            'path_specular': specPathNet
             }
-        validLossDiff1, validLossSpec1, validLossDiff2, validLossSpec2, validLossFinal, relL2LossFinal = validation(models, validDataloader, eps, criterion, device, epoch, use_llpm_buf,mode)
-        writer.add_scalar('Valid total relL2 loss', relL2LossFinal if relL2LossFinal != float('inf') else 1e+35, (epoch + 1) * len(dataloader))
-        writer.add_scalar('Valid total loss', validLossFinal if accuLossFinal != float('inf') else 1e+35, (epoch + 1) * len(dataloader))
-        writer.add_scalar('Valid diffuse loss 1', validLossDiff1 if validLossDiff1 != float('inf') else 0, (epoch + 1) * len(validDataloader))
-        writer.add_scalar('Valid specular loss 1', validLossSpec1 if validLossSpec1 != float('inf') else 0, (epoch + 1) * len(validDataloader))
-        writer.add_scalar('Valid diffuse loss 2', validLossDiff2 if validLossDiff2 != float('inf') else 0, (epoch + 1) * len(validDataloader))
-        writer.add_scalar('Valid specular loss 2', validLossSpec2 if validLossSpec2 != float('inf') else 0, (epoch + 1) * len(validDataloader))
+        validLossDiff1, validLossSpec1, validLossDiff2, validLossSpec2, validLossFinal, relL2LossFinal, pathDiffLoss, pathSpecLoss = validation(models, validDataloader, eps, criterion, device, epoch, use_llpm_buf,mode)
+        writer.add_scalar('Valid total relL2 loss', relL2LossFinal if relL2LossFinal != float('inf') else 1e+35, (epoch + 1))
+        writer.add_scalar('Valid total loss', validLossFinal if accuLossFinal != float('inf') else 1e+35, (epoch + 1))
+        writer.add_scalar('Valid diffuse loss 1', validLossDiff1 if validLossDiff1 != float('inf') else 0, (epoch + 1))
+        writer.add_scalar('Valid specular loss 1', validLossSpec1 if validLossSpec1 != float('inf') else 0, (epoch + 1))
+        writer.add_scalar('Valid diffuse loss 2', validLossDiff2 if validLossDiff2 != float('inf') else 0, (epoch + 1))
+        writer.add_scalar('Valid specular loss 2', validLossSpec2 if validLossSpec2 != float('inf') else 0, (epoch + 1))
+        writer.add_scalar('Valid path diffuse loss', pathDiffLoss if pathDiffLoss != float('inf') else 0, (epoch + 1))
+        writer.add_scalar('Valid path specular loss', pathSpecLoss if pathSpecLoss != float('inf') else 0, (epoch + 1))
 
 
         print("Epoch {}".format(epoch + 1))
@@ -499,6 +607,8 @@ def train(mode,
         print("ValidLossSpec2: {}".format(validLossSpec2))
         print("ValidLossFinal: {}".format(validLossFinal))
         print("ValidrelL2LossDiff: {}".format(relL2LossFinal))
+        print("pathDiffLoss: {}".format(pathDiffLoss))
+        print("pathSpecLoss: {}".format(pathSpecLoss))
         
 
         # lDiff.append(accuLossDiff)

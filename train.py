@@ -93,7 +93,7 @@ parser.add_argument('--epochs', default=20, type=int)
 parser.add_argument('--manif_w', default=0.1, type=float)
 parser.add_argument('--loss', default='L1')
 
-save_dir = 'kpcn_manif_w1_2'
+save_dir = 'kpcn_manif_pad'
 writer = SummaryWriter('kpcn/'+save_dir)
 
 

@@ -175,6 +175,22 @@ class DenoiseDataset(Dataset):
         'kpcn_albedo':
             albedo_r, albedo_g, albedo_b,
     """
+    
+    """KPCN_radiance input set
+        'target_total':
+            gt_r, gt_g, gt_b, # linear
+        'kpcn_radiance_in':
+            radiance_r, radiance_g, radiance_b, radiance_v, # albedo factored
+            radiance_r_dx, radiance_g_dx, radiance_b_dx, radiance_r_dy, radiance_g_dy, radiance_b_dy, 
+            normals_x, normals_y, normals_z, normals_v, 
+            normals_x_dx, normals_y_dx, normals_z_dx, normals_x_dy, normals_y_dy, normals_z_dy, 
+            depth, depth_v, 
+            depth_dx, depth_dy,
+            albedo_r, albedo_g, albedo_b, albedo_v, 
+            albedo_r_dx, albedo_g_dx, albedo_b_dx, albedo_r_dy, albedo_g_dy, albedo_b_dy, 
+        'kpcn_albedo':
+            albedo_r, albedo_g, albedo_b,
+    """
 
     """AMCD input set
         'ref': # diffuse_ref, specular_ref
