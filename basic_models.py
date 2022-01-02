@@ -75,10 +75,10 @@ class Up(nn.Module):
 
         # if bilinear, use the normal convolutions to reduce the number of channels
         if bilinear:
-            self.up = nn.Upsample(scale_factor=2, mode='nearest')
+            self.up = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=True)
             self.conv = DoubleConv(in_channels, out_channels, in_channels // 2)
         else:
-            self.up = nn.ConvTranspose2d(in_channels, in_channels // 2, kernel_size=2, stride=2)
+            self.up = nn.Upsample(scale_factor=2, mode='nearest')
             self.conv = DoubleConv(in_channels, out_channels)
 
     def forward(self, x1, x2):
@@ -165,11 +165,11 @@ class UNet_Half(nn.Module):
         self.down3 = Down(hidden*2, hidden*4)
         # self.down4 = Down(hidden*4, hidden*8 // factor)
 
-        # self.up1 = Up(hidden*8, hidden*4 // factor, bilinear)
+        self.up1 = Up(hidden*8, hidden*4 // factor, bilinear)
         self.up2 = Up(hidden*6, hidden*2 // factor, bilinear)
-        # self.up2 = Up(512, 256 // factor, bilinear)
         self.up3 = Up(hidden*3, hidden, bilinear)
         self.up4 = Up(hidden*2, hidden, bilinear)
+        
         self.outc = OutConv(hidden, n_classes)
 
     def forward(self, x):
@@ -190,7 +190,7 @@ class UNet_Half(nn.Module):
         # print('up x2', x.shape)
         x = self.up4(x, x1)
         # print('up x1', x.shape)
-        # logits = self.outc(x)
+        x = self.outc(x)
         return x
 
 
@@ -237,10 +237,10 @@ class UNet_Half(nn.Module):
 #         logits = self.outc(x)
 #         return logits
 
-# net = UNet(34, 3, hidden=64)
+# net = UNet(34, 1, hidden=64)
 # print('# Parameter for DecompNet : {}'.format(sum([p.numel() for p in net.parameters()])))
-# net_half = UNet_Half(34, 3, bilinear=True)
-# print('# Parameter for DecompNet : {}'.format(sum([p.numel() for p in net_half.parameters()])))
+# net = UNet_Half(34, 3, bilinear=False)
+# # print('# Parameter for DecompNet : {}'.format(sum([p.numel() for p in net_half.parameters()])))
 # batch = torch.rand((8, 34, 128, 128))
 # ret = net(batch)
 # print(ret.shape)
