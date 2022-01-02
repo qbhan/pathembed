@@ -6,14 +6,20 @@ from basic_models import *
 from utils import *
 from kpcn import *
 from path import *
+from path import *
 
 class decompModule(nn.Module):
-    def __init__(self, in_channel=34, out_channel=3, discrete=False):
+    def __init__(self, in_channel=34, out_channel=1, discrete=False, use_pbuffer=False):
         super(decompModule, self).__init__()
+        # print(in_channel)
         self.unet = UNet(in_channel, out_channel)
-        # self.unet = UNet_Half(in_channel, out_channel)
+        # self.unet = UNet_Half(in_channel, out_channel, bilinear=False)
         self.act = nn.Sigmoid()
         self.discrete = discrete
+        self.out_channel = out_channel
+        self.use_pbuffer = use_pbuffer
+        if use_pbuffer:
+            self.pathNet = PathNet(36)
 
     def forward(self, batch, use_llpm_buf=True):
 
@@ -23,11 +29,18 @@ class decompModule(nn.Module):
         x = batch['kpcn_diffuse_in']
         y = batch['kpcn_specular_in']
         noisy = batch['kpcn_diffuse_buffer'] * (batch['kpcn_albedo'] + 0.00316) + torch.exp(batch['kpcn_specular_buffer']) - 1.0
-        # noisy = torch.norm(noisy, dim=1).unsqueeze(1)
-       
+        if not self.use_pbuffer and self.out_channel == 1:
+            noisy = torch.norm(noisy, dim=1).unsqueeze(1)
+            
         noisy = torch.log(noisy + torch.ones_like(noisy))
         # print(batch['kpcn_diffuse_in'].shape)
         noisy = torch.cat((noisy, batch['kpcn_diffuse_in'][:,10:,:,:]), dim=1)
+        
+        if self.use_pbuffer:
+            p_buffer = self.pathNet(batch['paths'])
+            p_var = p_buffer.var(1).mean(1, keepdims=True)
+            p_var /= p_buffer.shape[1]
+            noisy = torch.cat((noisy, p_buffer.mean(1), p_var), dim=1)
         
         out = self.unet(noisy)
         mask = self.act(out)
@@ -108,7 +121,11 @@ class decompModule(nn.Module):
             batch_1[k] = batch_1[k].detach()
         for k, v in batch_2.items():
             batch_2[k] = batch_2[k].detach()
-        return mask, batch_1, batch_2
+            
+        if self.use_pbuffer:    
+            return mask, batch_1, batch_2, p_buffer, noisy[:, :3]
+        else:   
+            return mask, batch_1, batch_2
 
 
 class decompOriginModule(nn.Module):
