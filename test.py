@@ -15,7 +15,6 @@ from path import *
 from decomp import *
 from dataset import DenoiseDataset
 from losses import *
-
 permutation = [0, 3, 1, 2]
 eps = 0.00316
 
@@ -88,173 +87,176 @@ def denoise(models, dataloader, device, mode, save_dir, do_vis_feat, use_llpm_bu
         error_map = torch.zeros((3, 960, 960)).to(device)
         mask_supervision = torch.zeros((3, 960, 960)).to(device)
         x, y = 0, 0
-        for batch in tqdm(dataloader, leave=False, ncols=70):
-            # print(x, y)
-            if use_llpm_buf:
-                paths = batch['paths'].to(device)
-                p_buffer_diffuse, p_buffer_specular = diffPathNet(paths), specPathNet(paths)
-                '''Feature Disentanglement'''    
-                #TODO
-                _, _, c, _, _ = p_buffer_diffuse.shape
-                assert c >= 2
+        with open(save_dir + '/error.csv', 'w', encoding='UTF_8') as f:
+            csvwriter = csv.writer(f)
+            for batch in tqdm(dataloader, leave=False, ncols=70):
+                # print(x, y)
+                if use_llpm_buf:
+                    paths = batch['paths'].to(device)
+                    p_buffer_diffuse, p_buffer_specular = diffPathNet(paths), specPathNet(paths)
+                    '''Feature Disentanglement'''    
+                    #TODO
+                    _, _, c, _, _ = p_buffer_diffuse.shape
+                    assert c >= 2
+                    
+                    # Variance
+                    p_var_diffuse = p_buffer_diffuse.var(1).mean(1, keepdims=True)
+                    p_var_diffuse /= p_buffer_diffuse.shape[1]
+                    p_var_specular = p_buffer_specular.var(1).mean(1, keepdims=True)
+                    p_var_specular /= p_buffer_specular.shape[1]
+
+                    # make new batch
+                    batch = {
+                        'target_total': batch['target_total'].to(device),
+                        'target_diffuse': batch['target_diffuse'].to(device),
+                        'target_specular': batch['target_specular'].to(device),
+                        'kpcn_diffuse_in': torch.cat([batch['kpcn_diffuse_in'].to(device), p_buffer_diffuse.mean(1), p_var_diffuse], 1),
+                        'kpcn_specular_in': torch.cat([batch['kpcn_specular_in'].to(device), p_buffer_specular.mean(1), p_var_specular], 1),
+                        'kpcn_diffuse_buffer': batch['kpcn_diffuse_buffer'].to(device),
+                        'kpcn_specular_buffer': batch['kpcn_specular_buffer'].to(device),
+                        'kpcn_albedo': batch['kpcn_albedo'].to(device),
+                    }
+
+                X_diff = batch['kpcn_diffuse_in'].to(device)
+                Y_diff = batch['target_diffuse'].to(device)
+
+                outputDiff = diffuseNet(X_diff)
+                # if mode == 'KPCN':
+                # if 'kpcn' in mode:
+                #     X_input = crop_like(X_diff, outputDiff)
+                #     outputDiff = apply_kernel(outputDiff, X_input, device)
+
+                Y_diff = crop_like(Y_diff, outputDiff)
+                lossDiff += criterion(outputDiff, Y_diff).item()
+                scenelossDiff += criterion(outputDiff, Y_diff).item()
+
+                X_spec = batch['kpcn_specular_in'].to(device)
+                Y_spec = batch['target_specular'].to(device)
                 
-                # Variance
-                p_var_diffuse = p_buffer_diffuse.var(1).mean(1, keepdims=True)
-                p_var_diffuse /= p_buffer_diffuse.shape[1]
-                p_var_specular = p_buffer_specular.var(1).mean(1, keepdims=True)
-                p_var_specular /= p_buffer_specular.shape[1]
+                outputSpec = specularNet(X_spec)
+                # if mode == 'KPCN':
+                # if 'kpcn' in mode:
+                #     X_input = crop_like(X_spec, outputSpec)
+                #     outputSpec = apply_kernel(outputSpec, X_input, device)
 
-                # make new batch
-                batch = {
-                    'target_total': batch['target_total'].to(device),
-                    'target_diffuse': batch['target_diffuse'].to(device),
-                    'target_specular': batch['target_specular'].to(device),
-                    'kpcn_diffuse_in': torch.cat([batch['kpcn_diffuse_in'].to(device), p_buffer_diffuse.mean(1), p_var_diffuse], 1),
-                    'kpcn_specular_in': torch.cat([batch['kpcn_specular_in'].to(device), p_buffer_specular.mean(1), p_var_specular], 1),
-                    'kpcn_diffuse_buffer': batch['kpcn_diffuse_buffer'].to(device),
-                    'kpcn_specular_buffer': batch['kpcn_specular_buffer'].to(device),
-                    'kpcn_albedo': batch['kpcn_albedo'].to(device),
-                }
+                Y_spec = crop_like(Y_spec, outputSpec)
+                lossSpec += criterion(outputSpec, Y_spec).item()
+                scenelossSpec += criterion(outputSpec, Y_spec).item()
 
-            X_diff = batch['kpcn_diffuse_in'].to(device)
-            Y_diff = batch['target_diffuse'].to(device)
+                # calculate final ground truth error
+                albedo = batch['kpcn_albedo'].to(device)
+                albedo = crop_like(albedo, outputDiff)
+                outputFinal = outputDiff * (albedo + eps) + torch.exp(outputSpec) - 1.0
 
-            outputDiff = diffuseNet(X_diff)
-            # if mode == 'KPCN':
-            # if 'kpcn' in mode:
-            #     X_input = crop_like(X_diff, outputDiff)
-            #     outputDiff = apply_kernel(outputDiff, X_input, device)
-
-            Y_diff = crop_like(Y_diff, outputDiff)
-            lossDiff += criterion(outputDiff, Y_diff).item()
-            scenelossDiff += criterion(outputDiff, Y_diff).item()
-
-            X_spec = batch['kpcn_specular_in'].to(device)
-            Y_spec = batch['target_specular'].to(device)
-            
-            outputSpec = specularNet(X_spec)
-            # if mode == 'KPCN':
-            # if 'kpcn' in mode:
-            #     X_input = crop_like(X_spec, outputSpec)
-            #     outputSpec = apply_kernel(outputSpec, X_input, device)
-
-            Y_spec = crop_like(Y_spec, outputSpec)
-            lossSpec += criterion(outputSpec, Y_spec).item()
-            scenelossSpec += criterion(outputSpec, Y_spec).item()
-
-            # calculate final ground truth error
-            albedo = batch['kpcn_albedo'].to(device)
-            albedo = crop_like(albedo, outputDiff)
-            outputFinal = outputDiff * (albedo + eps) + torch.exp(outputSpec) - 1.0
-
-            Y_final = batch['target_total'].to(device)
-            # print(torch.max(Y_final))
-            Y_final = crop_like(Y_final, outputFinal)
-            # print(lossFinal, relL2Final)
-            lossFinal += criterion(outputFinal, Y_final).item()
-            scenelossFinal += criterion(outputFinal, Y_final).item()
-            relL2Final += relL2(outputFinal, Y_final).item()
-            scenerelL2Final += relL2(outputFinal, Y_final).item()
+                Y_final = batch['target_total'].to(device)
+                # print(torch.max(Y_final))
+                Y_final = crop_like(Y_final, outputFinal)
+                # print(lossFinal, relL2Final)
+                lossFinal += criterion(outputFinal, Y_final).item()
+                scenelossFinal += criterion(outputFinal, Y_final).item()
+                relL2Final += relL2(outputFinal, Y_final).item()
+                scenerelL2Final += relL2(outputFinal, Y_final).item()
 
 
-            # visualize
-            inputFinal = batch['kpcn_diffuse_buffer'] * (batch['kpcn_albedo'] + eps) + torch.exp(batch['kpcn_specular_buffer']) - 1.0
+                # visualize
+                inputFinal = batch['kpcn_diffuse_buffer'] * (batch['kpcn_albedo'] + eps) + torch.exp(batch['kpcn_specular_buffer']) - 1.0
 
 
-            # print(np.shape(inputFinal))
-            # print(np.shape(outputFinal))
-            # print(np.shape(Y_final))
-            input_image[:, x*64:x*64+64, y*64:y*64+64] = ToneMapTest(inputFinal[0, :, 32:96, 32:96])
-            output_image[:, x*64:x*64+64, y*64:y*64+64] = ToneMapTest(outputFinal[0, :, 16:80, 16:80])
-            gt_image[:, x*64:x*64+64, y*64:y*64+64] = ToneMapTest(Y_final[0, :, 16:80, 16:80])
-            error_map[:, x*64:x*64+64, y*64:y*64+64] = torch.abs(gt_image[:, x*64:x*64+64, y*64:y*64+64] - output_image[:, x*64:x*64+64, y*64:y*64+64])
-            em = torch.abs(gt_image[:, x*64:x*64+64, y*64:y*64+64] - output_image[:, x*64:x*64+64, y*64:y*64+64])
-            em = torch.ones_like(em) - F.normalize(em)
-            # print(em.shape)
-            mask_supervision[:, x*64:x*64+64, y*64:y*64+64] = em
-
-            if do_vis_feat:
-                diff_rad[:, x*64:x*64+64, y*64:y*64+64] = batch['kpcn_diffuse_in'][:,:3,:,:][0, :3, 32:96, 32:96]
-                diff_rad_var[:, x*64:x*64+64, y*64:y*64+64] = batch['kpcn_diffuse_in'][:,3,:,:][0, 32:96, 32:96]
-                diff_rad_dx[:, x*64:x*64+64, y*64:y*64+64] = batch['kpcn_diffuse_in'][:,4:7,:,:][0, :, 32:96, 32:96]
-                diff_rad_dy[:, x*64:x*64+64, y*64:y*64+64] = batch['kpcn_diffuse_in'][:,7:10,:,:][0, :, 32:96, 32:96]
-                spec_rad[:, x*64:x*64+64, y*64:y*64+64] = batch['kpcn_specular_in'][:,:3,:,:][0, :3, 32:96, 32:96]
-                spec_rad_var[:, x*64:x*64+64, y*64:y*64+64] = batch['kpcn_specular_in'][:,3,:,:][0, 32:96, 32:96]
-                spec_rad_dx[:, x*64:x*64+64, y*64:y*64+64] = batch['kpcn_specular_in'][:,4:7,:,:][0, :, 32:96, 32:96]
-                spec_rad_dy[:, x*64:x*64+64, y*64:y*64+64] = batch['kpcn_specular_in'][:,7:10,:,:][0, :, 32:96, 32:96]
-                normal[:, x*64:x*64+64, y*64:y*64+64] = batch['kpcn_diffuse_in'][:,10:13,:,:][0, :, 32:96, 32:96]
-                normal_var[:, x*64:x*64+64, y*64:y*64+64] = batch['kpcn_diffuse_in'][:,13,:,:][0, 32:96, 32:96]
-                normal_dx[:, x*64:x*64+64, y*64:y*64+64] = batch['kpcn_diffuse_in'][:,14:17,:,:][0, :, 32:96, 32:96]
-                normal_dy[:, x*64:x*64+64, y*64:y*64+64] = batch['kpcn_diffuse_in'][:,17:20,:,:][0, :, 32:96, 32:96]
-                depth[:, x*64:x*64+64, y*64:y*64+64] = batch['kpcn_diffuse_in'][:,20,:,:][0, 32:96, 32:96]
-                depth_var[:, x*64:x*64+64, y*64:y*64+64] = batch['kpcn_diffuse_in'][:,21,:,:][0, 32:96, 32:96]
-                depth_dx[:, x*64:x*64+64, y*64:y*64+64] = batch['kpcn_diffuse_in'][:,22,:,:][0, 32:96, 32:96]
-                depth_dy[:, x*64:x*64+64, y*64:y*64+64] = batch['kpcn_diffuse_in'][:,23,:,:][0, 32:96, 32:96]
-                albedo_in[:, x*64:x*64+64, y*64:y*64+64] = batch['kpcn_diffuse_in'][:,24:27,:,:][0, :, 32:96, 32:96]
-                albedo_in_var[:, x*64:x*64+64, y*64:y*64+64] = batch['kpcn_diffuse_in'][:,27,:,:][0, 32:96, 32:96]
-                albedo_in_dx[:, x*64:x*64+64, y*64:y*64+64] = batch['kpcn_diffuse_in'][:,28:31,:,:][0, :, 32:96, 32:96]
-                albedo_in_dy[:, x*64:x*64+64, y*64:y*64+64] = batch['kpcn_diffuse_in'][:,31:34,:,:][0, :, 32:96, 32:96]
-
-            
-            y += 1
-            if x < 15 and y>=15:
-                x += 1
-                y = 0
-
-            if x >= 15:
-                if not os.path.exists(save_dir + '/test{}'.format(image_idx)):
-                    os.makedirs(save_dir + '/test{}'.format(image_idx))
-                if not os.path.exists(save_dir + '/test{}/features'.format(image_idx)):
-                    os.makedirs(save_dir + '/test{}/features'.format(image_idx))
-                # if not os.path.exists(save_dir + '/test{}/attns'.format(image_idx)):
-                #   os.makedirs(save_dir + '/test{}/attns'.format(image_idx))
-
-                save_image(input_image, save_dir + '/test{}/noisy.png'.format(image_idx))
-                save_image(output_image, save_dir + '/test{}/denoise.png'.format(image_idx))
-                save_image(gt_image, save_dir + '/test{}/clean.png'.format(image_idx))
-                save_image(error_map, save_dir + '/test{}/error_map.png'.format(image_idx))
-                save_image(mask_supervision, save_dir + '/test{}/mask_supervision.png'.format(image_idx))
-
-                # losses
-                scenelossDiff, scenelossSpec, scenelossFinal, scenerelL2Final = scenelossDiff/225, scenelossSpec/225, scenelossFinal/225, scenerelL2Final/225
-                print()
-                print('test {} lossDiff : {}'.format(image_idx, scenelossDiff))
-                print('test {} lossSpec : {}'.format(image_idx, scenelossSpec))
-                print('test {} lossFinal : {}'.format(image_idx, scenelossFinal))
-                print('test {} relL2Final : {}'.format(image_idx, scenerelL2Final))
-                writer.add_scalar('test lossDiff',  scenelossDiff if lossFinal != float('inf') else 1e+35, image_idx)
-                writer.add_scalar('test lossSpec',  scenelossSpec if lossFinal != float('inf') else 1e+35, image_idx)
-                writer.add_scalar('test lossFinal',  scenelossFinal if lossFinal != float('inf') else 1e+35, image_idx)
-                writer.add_scalar('test relL2Final',  scenerelL2Final if lossFinal != float('inf') else 1e+35, image_idx)
+                # print(np.shape(inputFinal))
+                # print(np.shape(outputFinal))
+                # print(np.shape(Y_final))
+                input_image[:, x*64:x*64+64, y*64:y*64+64] = ToneMapTest(inputFinal[0, :, 32:96, 32:96])
+                output_image[:, x*64:x*64+64, y*64:y*64+64] = ToneMapTest(outputFinal[0, :, 16:80, 16:80])
+                gt_image[:, x*64:x*64+64, y*64:y*64+64] = ToneMapTest(Y_final[0, :, 16:80, 16:80])
+                error_map[:, x*64:x*64+64, y*64:y*64+64] = torch.abs(gt_image[:, x*64:x*64+64, y*64:y*64+64] - output_image[:, x*64:x*64+64, y*64:y*64+64])
+                em = torch.abs(gt_image[:, x*64:x*64+64, y*64:y*64+64] - output_image[:, x*64:x*64+64, y*64:y*64+64])
+                em = torch.ones_like(em) - F.normalize(em)
+                # print(em.shape)
+                mask_supervision[:, x*64:x*64+64, y*64:y*64+64] = em
 
                 if do_vis_feat:
-                    save_image(diff_rad, save_dir + '/test{}/features/diff_rad.png'.format(image_idx))
-                    save_image(diff_rad_var, save_dir + '/test{}/features/diff_rad_var.png'.format(image_idx))
-                    save_image(diff_rad_dx, save_dir + '/test{}/features/diff_rad_dx.png'.format(image_idx))
-                    save_image(diff_rad_dy, save_dir + '/test{}/features/diff_rad_dy.png'.format(image_idx))
-                    save_image(spec_rad, save_dir + '/test{}/features/spec_rad.png'.format(image_idx))
-                    save_image(spec_rad_var, save_dir + '/test{}/features/spec_rad_var.png'.format(image_idx))
-                    save_image(spec_rad_dx, save_dir + '/test{}/features/spec_rad_dx.png'.format(image_idx))
-                    save_image(spec_rad_dy, save_dir + '/test{}/features/spec_rad_dy.png'.format(image_idx))
-                    save_image(normal, save_dir + '/test{}/features/normal.png'.format(image_idx))
-                    save_image(normal_var, save_dir + '/test{}/features/normal_var.png'.format(image_idx))
-                    save_image(normal_dx, save_dir + '/test{}/features/normal_dx.png'.format(image_idx))
-                    save_image(normal_dy, save_dir + '/test{}/features/normal_dy.png'.format(image_idx))
-                    save_image(depth, save_dir + '/test{}/features/depth.png'.format(image_idx))
-                    save_image(depth_var, save_dir + '/test{}/features/depth_var.png'.format(image_idx))
-                    save_image(depth_dx, save_dir + '/test{}/features/depth_dx.png'.format(image_idx))
-                    save_image(depth_dy, save_dir + '/test{}/features/depth_dy.png'.format(image_idx))
-                    save_image(albedo_in, save_dir + '/test{}/features/albedo.png'.format(image_idx))
-                    save_image(albedo_in_var, save_dir + '/test{}/features/albedo_var.png'.format(image_idx))
-                    save_image(albedo_in_dx, save_dir + '/test{}/features/albedo_dx.png'.format(image_idx))
-                    save_image(albedo_in_dy, save_dir + '/test{}/features/albedo_dy.png'.format(image_idx))
+                    diff_rad[:, x*64:x*64+64, y*64:y*64+64] = batch['kpcn_diffuse_in'][:,:3,:,:][0, :3, 32:96, 32:96]
+                    diff_rad_var[:, x*64:x*64+64, y*64:y*64+64] = batch['kpcn_diffuse_in'][:,3,:,:][0, 32:96, 32:96]
+                    diff_rad_dx[:, x*64:x*64+64, y*64:y*64+64] = batch['kpcn_diffuse_in'][:,4:7,:,:][0, :, 32:96, 32:96]
+                    diff_rad_dy[:, x*64:x*64+64, y*64:y*64+64] = batch['kpcn_diffuse_in'][:,7:10,:,:][0, :, 32:96, 32:96]
+                    spec_rad[:, x*64:x*64+64, y*64:y*64+64] = batch['kpcn_specular_in'][:,:3,:,:][0, :3, 32:96, 32:96]
+                    spec_rad_var[:, x*64:x*64+64, y*64:y*64+64] = batch['kpcn_specular_in'][:,3,:,:][0, 32:96, 32:96]
+                    spec_rad_dx[:, x*64:x*64+64, y*64:y*64+64] = batch['kpcn_specular_in'][:,4:7,:,:][0, :, 32:96, 32:96]
+                    spec_rad_dy[:, x*64:x*64+64, y*64:y*64+64] = batch['kpcn_specular_in'][:,7:10,:,:][0, :, 32:96, 32:96]
+                    normal[:, x*64:x*64+64, y*64:y*64+64] = batch['kpcn_diffuse_in'][:,10:13,:,:][0, :, 32:96, 32:96]
+                    normal_var[:, x*64:x*64+64, y*64:y*64+64] = batch['kpcn_diffuse_in'][:,13,:,:][0, 32:96, 32:96]
+                    normal_dx[:, x*64:x*64+64, y*64:y*64+64] = batch['kpcn_diffuse_in'][:,14:17,:,:][0, :, 32:96, 32:96]
+                    normal_dy[:, x*64:x*64+64, y*64:y*64+64] = batch['kpcn_diffuse_in'][:,17:20,:,:][0, :, 32:96, 32:96]
+                    depth[:, x*64:x*64+64, y*64:y*64+64] = batch['kpcn_diffuse_in'][:,20,:,:][0, 32:96, 32:96]
+                    depth_var[:, x*64:x*64+64, y*64:y*64+64] = batch['kpcn_diffuse_in'][:,21,:,:][0, 32:96, 32:96]
+                    depth_dx[:, x*64:x*64+64, y*64:y*64+64] = batch['kpcn_diffuse_in'][:,22,:,:][0, 32:96, 32:96]
+                    depth_dy[:, x*64:x*64+64, y*64:y*64+64] = batch['kpcn_diffuse_in'][:,23,:,:][0, 32:96, 32:96]
+                    albedo_in[:, x*64:x*64+64, y*64:y*64+64] = batch['kpcn_diffuse_in'][:,24:27,:,:][0, :, 32:96, 32:96]
+                    albedo_in_var[:, x*64:x*64+64, y*64:y*64+64] = batch['kpcn_diffuse_in'][:,27,:,:][0, 32:96, 32:96]
+                    albedo_in_dx[:, x*64:x*64+64, y*64:y*64+64] = batch['kpcn_diffuse_in'][:,28:31,:,:][0, :, 32:96, 32:96]
+                    albedo_in_dy[:, x*64:x*64+64, y*64:y*64+64] = batch['kpcn_diffuse_in'][:,31:34,:,:][0, :, 32:96, 32:96]
+
                 
-                
-                # print('SAVED IMAGES')
-                # init
-                x, y = 0, 0
-                scenelossDiff, scenelossSpec, scenelossFinal, scenerelL2Final = 0, 0, 0, 0
-                image_idx += 1
+                y += 1
+                if x < 15 and y>=15:
+                    x += 1
+                    y = 0
+
+                if x >= 15:
+                    if not os.path.exists(save_dir + '/test{}'.format(image_idx)):
+                        os.makedirs(save_dir + '/test{}'.format(image_idx))
+                    if not os.path.exists(save_dir + '/test{}/features'.format(image_idx)):
+                        os.makedirs(save_dir + '/test{}/features'.format(image_idx))
+                    # if not os.path.exists(save_dir + '/test{}/attns'.format(image_idx)):
+                    #   os.makedirs(save_dir + '/test{}/attns'.format(image_idx))
+
+                    save_image(input_image, save_dir + '/test{}/noisy.png'.format(image_idx))
+                    save_image(output_image, save_dir + '/test{}/denoise.png'.format(image_idx))
+                    save_image(gt_image, save_dir + '/test{}/clean.png'.format(image_idx))
+                    save_image(error_map, save_dir + '/test{}/error_map.png'.format(image_idx))
+                    save_image(mask_supervision, save_dir + '/test{}/mask_supervision.png'.format(image_idx))
+
+                    # losses
+                    scenelossDiff, scenelossSpec, scenelossFinal, scenerelL2Final = scenelossDiff/225, scenelossSpec/225, scenelossFinal/225, scenerelL2Final/225
+                    print()
+                    print('test {} lossDiff : {}'.format(image_idx, scenelossDiff))
+                    print('test {} lossSpec : {}'.format(image_idx, scenelossSpec))
+                    print('test {} lossFinal : {}'.format(image_idx, scenelossFinal))
+                    print('test {} relL2Final : {}'.format(image_idx, scenerelL2Final))
+                    writer.add_scalar('test lossDiff',  scenelossDiff if lossFinal != float('inf') else 1e+35, image_idx)
+                    writer.add_scalar('test lossSpec',  scenelossSpec if lossFinal != float('inf') else 1e+35, image_idx)
+                    writer.add_scalar('test lossFinal',  scenelossFinal if lossFinal != float('inf') else 1e+35, image_idx)
+                    writer.add_scalar('test relL2Final',  scenerelL2Final if lossFinal != float('inf') else 1e+35, image_idx)
+                    csvwriter.writerow([scenelossFinal, scenerelL2Final])
+
+                    if do_vis_feat:
+                        save_image(diff_rad, save_dir + '/test{}/features/diff_rad.png'.format(image_idx))
+                        save_image(diff_rad_var, save_dir + '/test{}/features/diff_rad_var.png'.format(image_idx))
+                        save_image(diff_rad_dx, save_dir + '/test{}/features/diff_rad_dx.png'.format(image_idx))
+                        save_image(diff_rad_dy, save_dir + '/test{}/features/diff_rad_dy.png'.format(image_idx))
+                        save_image(spec_rad, save_dir + '/test{}/features/spec_rad.png'.format(image_idx))
+                        save_image(spec_rad_var, save_dir + '/test{}/features/spec_rad_var.png'.format(image_idx))
+                        save_image(spec_rad_dx, save_dir + '/test{}/features/spec_rad_dx.png'.format(image_idx))
+                        save_image(spec_rad_dy, save_dir + '/test{}/features/spec_rad_dy.png'.format(image_idx))
+                        save_image(normal, save_dir + '/test{}/features/normal.png'.format(image_idx))
+                        save_image(normal_var, save_dir + '/test{}/features/normal_var.png'.format(image_idx))
+                        save_image(normal_dx, save_dir + '/test{}/features/normal_dx.png'.format(image_idx))
+                        save_image(normal_dy, save_dir + '/test{}/features/normal_dy.png'.format(image_idx))
+                        save_image(depth, save_dir + '/test{}/features/depth.png'.format(image_idx))
+                        save_image(depth_var, save_dir + '/test{}/features/depth_var.png'.format(image_idx))
+                        save_image(depth_dx, save_dir + '/test{}/features/depth_dx.png'.format(image_idx))
+                        save_image(depth_dy, save_dir + '/test{}/features/depth_dy.png'.format(image_idx))
+                        save_image(albedo_in, save_dir + '/test{}/features/albedo.png'.format(image_idx))
+                        save_image(albedo_in_var, save_dir + '/test{}/features/albedo_var.png'.format(image_idx))
+                        save_image(albedo_in_dx, save_dir + '/test{}/features/albedo_dx.png'.format(image_idx))
+                        save_image(albedo_in_dy, save_dir + '/test{}/features/albedo_dy.png'.format(image_idx))
+                    
+                    
+                    # print('SAVED IMAGES')
+                    # init
+                    x, y = 0, 0
+                    scenelossDiff, scenelossSpec, scenelossFinal, scenerelL2Final = 0, 0, 0, 0
+                    image_idx += 1
 
 
     return lossDiff/len(dataloader), lossSpec/len(dataloader), lossFinal/len(dataloader), relL2Final/len(dataloader)
