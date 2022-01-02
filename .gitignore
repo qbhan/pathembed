@@ -5,3 +5,6 @@ new_runs/
 tryouts/
 models/
 kpcn/
+test/
+test_runs/
+error_map/
