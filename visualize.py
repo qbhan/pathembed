@@ -148,8 +148,8 @@ def error_error_map(img1, img2):
 
 def error_map(test1_dir, test2_dir, dir='error_map/'):
     for i in range(24):
-        test1_error_dir = test1_dir + '/test{}/denoise.png'.format(i)
-        test2_error_dir = test2_dir + '/test{}/denoise.png'.format(i)
+        test1_error_dir = test1_dir + '/test{}/error.png'.format(i)
+        test2_error_dir = test2_dir + '/test{}/error.png'.format(i)
         error = error_error_map(test1_error_dir, test2_error_dir)
         error.save(dir+'error_{}.png'.format(i))
         
@@ -162,5 +162,35 @@ def supervision_flip(test1_dir):
         img = Image.fromarray(img.astype('uint8'), 'RGB')
         img.save(test1_dir + '/test{}/mask_supervision.png'.format(i))
         
+def reverse_mask(test1_dir):
+    for i in range(24):
+        supervision_dir = test1_dir + '/test{}/mask.png'.format(i)
+        img = np.asarray(Image.open(supervision_dir))
+        img = np.ones_like(img) * 255 - img
+        # print(np.max(img))
+        img = Image.fromarray(img.astype('uint8'), 'RGB')
+        img.save(test1_dir + '/test{}/mask_reverse.png'.format(i))
+        
+        
+        
+import cv2
+
+def grey2heat(test_dir):
+    for i in range(24):
+        mask_dir = test_dir + '/test{}/mask.png'.format(i)
+        rev_mask_dir = test_dir + '/test{}/mask_reverse.png'.format(i)
+        mask = cv2.imread(mask_dir)
+        rev_mask = cv2.imread(rev_mask_dir)
+        mask_heat = cv2.applyColorMap(mask, cv2.COLORMAP_JET)
+        rev_mask_heat = cv2.applyColorMap(rev_mask, cv2.COLORMAP_JET)
+        cv2.imwrite(test_dir + '/test{}/mask_heatmap.png'.format(i), mask_heat)
+        cv2.imwrite(test_dir + '/test{}/mask_reverse_heatmap.png'.format(i), rev_mask_heat)
+
+
+
 # error_map('test/kpcn', 'test/kpcn_decomp_mask_2')
-supervision_flip('test/kpcn')
+# supervision_flip('test/kpcn')
+# reverse_mask('test/kpcn_decomp_c1')
+# grey2heat('test/kpcn_decomp_c1')
+# reverse_mask('test/kpcn_decomp_c1_mask')
+# grey2heat('test/kpcn_decomp_c1_mask')
