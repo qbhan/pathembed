@@ -3,9 +3,9 @@ python test.py \
   --device 'cuda:0' \
   --use_llpm_buf True \
   --input_channels 39 \
-  --diffuse_model trained_model/kpcn_manif_w1/diff_e8.pt \
-  --specular_model trained_model/kpcn_manif_w1/spec_e8.pt \
-  --path_diffuse_model trained_model/kpcn_manif_w1/path_diff_e8.pt \
-  --path_diffuse_model trained_model/kpcn_manif_w1/path_spec_e8.pt \
+  --diffuse_model trained_model/kpcn_manif_valid_fix/diff_e23.pt \
+  --specular_model trained_model/kpcn_manif_valid_fix/spec_e23.pt \
+  --path_diffuse_model trained_model/kpcn_manif_valid_fix/path_diff_e23.pt \
+  --path_diffuse_model trained_model/kpcn_manif_valid_fix/path_spec_e23.pt \
   --data_dir '/mnt/ssd2/kbhan/KPCN' \
-  --save_dir 'test/kpcn_manif_w1'
+  --save_dir 'test/kpcn_manif_valid_fix'
